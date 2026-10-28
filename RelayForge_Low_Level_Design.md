@@ -352,10 +352,12 @@ identifiers; externally visible IDs may be UUIDs serialized as strings
 with prefixes for readability. If prefixed IDs are adopted, store UUIDs
 internally and map the prefix at the API boundary.
 
-The following schema lists logical fields and local constraints. It is not
-the physical partitioned/sharded migration: time-partitioned primary and
-unique keys must include the partition key. Section 5.13 specifies the
-physical design requirements to resolve before Flyway migrations.
+The following schema lists logical fields and example constraints from the
+initial single-database model. It is not deployable across service-owned
+databases. Time-partitioned
+primary and unique keys must include the partition key. Section 5.13
+defines the replacement ownership and access contract; remaining physical
+keys and DDL must pass the capacity gate before Flyway migrations.
 
 ### 5.1 `organizations`
 
@@ -498,7 +500,7 @@ with composite unique/FK constraints.
 ``` sql
 CREATE TABLE events (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    organization_id UUID NOT NULL REFERENCES organizations(id),
+    organization_id UUID NOT NULL,
     event_type      VARCHAR(200) NOT NULL,
     occurred_at     TIMESTAMPTZ,
     schema_version  INTEGER NOT NULL DEFAULT 1,
@@ -506,7 +508,7 @@ CREATE TABLE events (
     payload_hash    BYTEA NOT NULL,
     idempotency_key VARCHAR(255) NOT NULL,
     status          VARCHAR(24) NOT NULL DEFAULT 'ACCEPTED'
-                    CHECK (status IN ('ACCEPTED', 'ROUTING', 'ROUTED', 'NO_SUBSCRIBERS')),
+                    CHECK (status = 'ACCEPTED'),
     accepted_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (organization_id, idempotency_key),
@@ -539,7 +541,7 @@ retrieval requirements justify it; any copy needs a matching lifecycle.
 ``` sql
 CREATE TABLE deliveries (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    organization_id     UUID NOT NULL REFERENCES organizations(id),
+    organization_id     UUID NOT NULL,
     event_id            UUID NOT NULL,
     endpoint_id         UUID NOT NULL,
     subscription_id     UUID,
@@ -563,13 +565,7 @@ CREATE TABLE deliveries (
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at        TIMESTAMPTZ,
     version             BIGINT NOT NULL DEFAULT 1,
-    UNIQUE (event_id, endpoint_id, generation),
-    FOREIGN KEY (event_id, organization_id)
-        REFERENCES events(id, organization_id),
-    FOREIGN KEY (endpoint_id, organization_id)
-        REFERENCES endpoints(id, organization_id),
-    FOREIGN KEY (subscription_id, organization_id)
-        REFERENCES subscriptions(id, organization_id)
+    UNIQUE (event_id, endpoint_id, generation)
 );
 CREATE INDEX idx_deliveries_due
     ON deliveries(status, next_attempt_at, created_at)
@@ -627,7 +623,7 @@ internal safe code plus a short sanitized message.
 ``` sql
 CREATE TABLE authentication_attempts (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    endpoint_id         UUID NOT NULL REFERENCES endpoints(id),
+    endpoint_id         UUID NOT NULL,
     delivery_id         UUID REFERENCES deliveries(id),
     attempt_number      INTEGER NOT NULL,
     started_at          TIMESTAMPTZ NOT NULL,
@@ -686,10 +682,10 @@ publisher crash and replay through the recovery window.
 ``` sql
 CREATE TABLE replay_requests (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    organization_id     UUID NOT NULL REFERENCES organizations(id),
+    organization_id     UUID NOT NULL,
     original_delivery_id UUID NOT NULL REFERENCES deliveries(id),
     replay_delivery_id  UUID NOT NULL REFERENCES deliveries(id),
-    requested_by_key_id UUID REFERENCES api_keys(id),
+    requested_by_key_id UUID,
     reason              VARCHAR(500),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (replay_delivery_id)
@@ -719,11 +715,10 @@ include secrets in `details`.
 
 -   Every organization-owned query MUST include the authenticated
     `organization_id`.
--   Enforce tenant ownership in the schema: add `UNIQUE (id, organization_id)`
-    to `endpoints`, `subscriptions`, and `events`, then composite foreign
-    keys from subscriptions to endpoints and from deliveries to events,
-    endpoints, and (when non-null) subscriptions using their respective
-    `(id, organization_id)` pairs. Retain application authorization checks.
+-   Enforce tenant ownership with composite keys and foreign keys only
+    within an owning database. For cross-service references, validate the
+    organization and resource at the API or message boundary, and persist
+    the verified IDs and configuration version. Retain authorization checks.
 -   Expire historical event cohorts after 90 days; never age-purge
     organizations, API keys, users, endpoints, or subscriptions. Keep
     account/configuration audit records under a separate policy. Check
@@ -744,6 +739,68 @@ include secrets in `details`.
     the physical topology using measured row sizes and final load tests.
 
 ### 5.13 Physical PostgreSQL design gate
+
+#### Storage ownership and transaction boundaries
+
+Each owner has its own database and migration history. Worker roles share
+the owning service's database credentials, restricted to its tables. Local
+Compose may place these databases on one PostgreSQL instance; that does not
+permit cross-database joins, foreign keys, or transactions.
+
+| Owner | Stored tables | Atomic writes and consumers |
+|---|---|---|
+| Control plane | `organizations`, `api_keys`, `users`, `endpoints`, `subscriptions`, account/configuration `audit_records`, `control_outbox` | Provisioning, endpoint and subscription changes, and their configuration-change outbox records commit locally. |
+| Ingestion | `idempotency_registry`, `events`, `ingestion_outbox` | Registry claim, event payload, and `event.accepted` outbox record commit on the selected ingestion shard before `202`. |
+| Delivery | `routing_progress`, `routing_targets`, `deliveries`, `delivery_attempts`, `authentication_attempts`, `replay_requests`, delivery replay audit, `delivery_outbox`, `subscription_projection` | Router, worker, scheduler, replay, and delivery publisher commit state and messages on the selected delivery shard. |
+| Analytics | ClickHouse delivery facts and query models | Kafka facts are deduplicated by their stable fact identity; no PostgreSQL transaction spans analytics. |
+
+The generic `outbox` example in §5.10 is a template for the three local
+outboxes, not a shared table. A service may publish only rows committed in
+its own database. The delivery router never updates ingestion `events`;
+`routing_progress` owns routing status, completion, and any cursor. An
+event query composes ingestion acceptance with delivery progress through
+bounded internal reads; a lagging delivery view is reported as pending.
+
+#### Cross-service data contracts
+
+Control-plane changes publish a versioned configuration event from
+`control_outbox`. The router applies it idempotently to a durable
+`subscription_projection` keyed by `(organization_id, subscription_id)`;
+each row carries `endpoint_id`, `event_type`, filter, status, and monotonically
+increasing source version. In one delivery transaction, routing records
+the selected `(subscription_id, endpoint_id, source_version)` rows in
+`routing_targets` and a cursor in `routing_progress`. Later chunks use
+those persisted targets; redelivery cannot silently change fan-out. A
+gap, stale projection, or unavailable change stream pauses affected routing
+and triggers bounded repair from a control-plane snapshot API. Projection
+bootstrap and catch-up must complete before the router claims readiness.
+
+The worker fetches the endpoint's current status and versioned delivery
+configuration from a bounded, authenticated control-plane read immediately
+before sending. It fails closed on an unavailable or disabled endpoint;
+retryable read failures remain durable delivery work. Secrets never enter
+Kafka or the subscription projection. Control-plane responses and caches
+must be scoped by organization and have explicit size and timeout limits.
+
+`event.accepted` carries organization ID, event ID, acceptance cohort,
+ingestion locator version, event type, and payload digest/reference. The
+ingestion service exposes an authenticated internal payload read by this
+locator; it checks organization and event identity, returns the immutable
+payload only while retained, and uses bounded response size and deadline.
+The router retrieves it when filters need payload fields; the worker
+retrieves it before constructing the outbound request. A
+temporary read failure retries without spending an HTTP attempt; a
+confirmed expired event is handled by the retention/replay policy. Kafka
+and delivery rows do not hold a second authoritative payload copy.
+
+Cross-service IDs are claims, not database foreign keys. On message
+consumption, verify organization ID, locator/cohort, message version, and
+resource ownership against the authoritative owner or an authenticated,
+versioned projection. Reject mismatches to a bounded error path; never
+silently create a delivery for an unverified endpoint or event. Local
+composite keys enforce organization scope where both tables share a
+database. No service writes another owner's tables, and no request holds a
+database transaction across an internal read or Kafka publish.
 
 | Table | Lifecycle and intended owner |
 |---|---|
@@ -1119,20 +1176,27 @@ credentials or complete secret configuration in Kafka messages.
 Payload:
 
 ``` json
-{"event_id":"evt_..."}
+{
+  "organization_id": "org_...",
+  "event_id": "evt_...",
+  "accepted_day": "2026-10-28",
+  "ingestion_locator_version": 1,
+  "event_type": "order.created",
+  "payload_hash": "..."
+}
 ```
 
-Partition key: `event_id` or organization-aware key if partition
-distribution is needed. The routing consumer: 1. Loads event by ID. 2.
-Returns success for a missing/deleted event only if the deletion policy
-explicitly allows tombstones; otherwise send to bounded retry/DLQ
-handling. 3. Finds subscriptions where
-`organization_id = event.organization_id`,
-`event_type = event.event_type`, and status is `ACTIVE`. 4. Applies the
-supported deterministic filter, if configured. 5. In one transaction,
-creates one delivery per matching endpoint and its `delivery.ready`
-outbox record. 6. Updates event routing status to `ROUTED` or
-`NO_SUBSCRIBERS`. 7. Commits DB transaction, then commits Kafka offset.
+Partition key and locator are defined by the capacity gate. The routing
+consumer: 1. Validates the versioned event reference and organization
+against ingestion. 2. Reads the payload through the bounded internal API
+when filtering requires it. 3. Selects active subscriptions from the
+delivery-owned projection and persists `routing_targets` and
+`routing_progress` in one local transaction. 4. Creates deliveries and
+`delivery.ready` outbox records in bounded local transactions using the
+persisted targets. 5. Marks delivery-owned routing progress complete only
+after every target is materialized. 6. Commits Kafka offset after durable
+progress; recovery resumes unfinished progress. A missing event follows
+the explicit retention/tombstone policy or bounded retry/error path.
 
 ### 7.4 `delivery.ready.v1`
 
@@ -1228,30 +1292,29 @@ Do not hold DB locks while calling Secret Manager.
 
 ### 8.3 Event acceptance
 
-Single PostgreSQL transaction: 1. Authenticate request before entering
-transaction. 2. Canonicalize request and calculate `payload_hash`. 3.
-Attempt insert into `events` with `(organization_id, idempotency_key)`.
-4. If key conflict: compare stored hash; return existing event if same,
-else raise conflict. 5. Insert `outbox` row with
-`message_type=event.accepted`, topic and minimal event reference. 6.
-Commit. 7. Return `202 Accepted`.
+Single ingestion-shard PostgreSQL transaction: 1. Authenticate request
+before entering transaction. 2. Canonicalize request and calculate
+`payload_hash`. 3. Claim `(organization_id, idempotency_key)` in the
+shard-local 90-day registry. 4. If the key exists, compare its stored hash;
+return the original event if equal, otherwise raise a conflict. 5. Insert
+the event and `ingestion_outbox` row with `message_type=event.accepted`
+and a versioned event reference. 6. Commit with the required synchronous
+standby confirmation. 7. Return `202 Accepted`.
 
 The event must never be acknowledged before the transaction is
 committed.
 
 ### 8.4 Event routing
 
-One transaction per event: 1. Lock or otherwise claim the event routing
-operation idempotently. 2. Query active subscriptions for organization +
-event type. 3. Apply filter evaluation. 4. Insert `deliveries` with
-generation `1`, `ON CONFLICT DO NOTHING`. 5. For each newly inserted
-delivery, insert a `delivery.ready` outbox record. 6. Update event
-routing status and counters if stored. 7. Commit. 8. Acknowledge Kafka
-offset.
-
-For high fan-out, use bounded chunks. If chunking, introduce a durable
-routing progress/cursor state so a crash cannot leave an event marked
-complete before all subscriptions are processed.
+First delivery-shard transaction: claim the event routing operation,
+resolve active subscriptions and filters from a ready projection, persist
+the selected `routing_targets` and `routing_progress`, then commit. Process
+the persisted targets in bounded chunks. Each chunk inserts deliveries
+with generation `1` and conflict-safe uniqueness, writes matching
+`delivery_outbox` rows, advances the durable cursor, and commits locally.
+Mark routing complete only after the last target commits. A crash resumes
+from the cursor; Kafka redelivery cannot recalculate a different target
+set for the same event. Never update the ingestion-owned event row.
 
 ### 8.5 Delivery attempt lifecycle
 
@@ -2134,8 +2197,6 @@ The following final decisions are part of this LLD:
     early refresh reduce stampedes.
 
 Implementation design and configuration still required before Milestone A:
-- Replace shared-schema cross-service foreign keys with explicit ownership,
-  versioned contracts, and local projections for the HLD §13 service split.
 - Finalize physical DDL for event/idempotency shard routing, daily event
   cohorts, delivery history, payload access, hot-tenant policy, and
   90-day retention of billions of rows.
