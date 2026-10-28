@@ -93,10 +93,10 @@ Adapt service names to the actual `compose.yaml`; keep equivalent commands in th
 
 ### A1. Application structure and configuration
 
-- [ ] Create Java 21 / Spring Boot application with modules/packages matching LLD: `organization`, `security`, `endpoint`, `subscription`, `event`, `outbox`, `delivery`, `auth`, `replay`, `analytics`, `observability`.
-- [ ] Define configuration binding and validation for database, Kafka, Redis, ClickHouse, API limits, webhook timeout, retry policy, encryption key provider, and trusted provisioning credentials.
-- [ ] Add request ID middleware; propagate `X-Request-Id` to logs and responses.
-- [ ] Add consistent error response DTO and validation errors. Do not return stack traces or internal dependency details.
+- [x] Create Java 21 / Spring Boot entry points for every deployable role, with shared runtime and HTTP support modules. Add domain packages as their owning milestones are implemented.
+- [x] Define configuration binding and validation for database, Kafka, Redis, ClickHouse, API limits, webhook timeout, retry policy, encryption key provider, and trusted provisioning credentials.
+- [x] Add request ID middleware; propagate `X-Request-Id` to logs and responses.
+- [x] Add consistent error response DTO and validation errors. Do not return stack traces or internal dependency details.
 
 **Touches:** API bootstrap/configuration, shared error handling, logging. No domain tables yet.  
 **Checkpoint A1:** App builds in Docker; malformed requests return a stable 4xx schema; unexpected exceptions return sanitized 5xx; each request has a correlation ID.
