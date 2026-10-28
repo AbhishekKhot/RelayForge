@@ -1,19 +1,76 @@
 # RelayForge
 
-RelayForge is a webhook delivery platform. Its architecture and implementation sequence are documented in the root design files.
+RelayForge accepts customer events and delivers them as webhooks to registered endpoints. Customers configure accounts, API keys, endpoints, and subscriptions; producers submit events with an idempotency key. RelayForge durably accepts each event before routing it to matching endpoints, retrying eligible failures, and recording delivery history and analytics.
 
-## Current state
+The repository is currently a Maven module scaffold. The services, database migrations, Docker images, and end-to-end tests are planned but are not implemented yet. Follow the [implementation checklist](RelayForge_Implementation_Checklist.md) for the build sequence.
 
-This repository contains a Maven reactor scaffold for the planned deployable roles. It has no runnable service or test suite yet. Database schemas, Docker images, and service contracts will follow the capacity architecture gate in the implementation checklist.
+## High-level design
 
-Run `mvn validate` to verify the Maven module layout. The target language level is Java 21; Maven currently runs with the JDK selected by the local environment.
+![RelayForge system context](docs/diagrams/system-context.svg)
 
-## Modules
+![Durable event acceptance](docs/diagrams/event-acceptance.svg)
 
-- `relayforge-control-plane`: accounts, credentials, endpoints, and subscriptions.
-- `relayforge-ingestion` and `relayforge-ingestion-publisher`: event acceptance and publication.
-- `relayforge-router`, `relayforge-delivery-worker`, `relayforge-delivery-publisher`, and `relayforge-retry-scheduler`: delivery roles.
-- `relayforge-analytics-consumer` and `relayforge-analytics-api`: analytical ingestion and queries.
-- `relayforge-contracts`: versioned cross-service message contracts.
+![Routing, delivery, and retries](docs/diagrams/routing-delivery.svg)
 
-See `RelayForge_High_Level_Design.md`, `RelayForge_Low_Level_Design.md`, and `RelayForge_Implementation_Checklist.md` before adding implementation code.
+![Service ownership and analytics flow](docs/diagrams/logical-architecture.svg)
+
+## Implementation stack
+
+| Component | Planned role |
+|---|---|
+| Java 21, Spring Boot, Maven | Service and worker applications; Maven reactor for the modules |
+| PostgreSQL, Flyway | Authoritative service-owned data, local outboxes, and migrations |
+| Kafka | Asynchronous event, delivery-work, and analytics-fact transport |
+| Redis | Short-lived quota, token-cache, and coordination state |
+| ClickHouse | Eventually consistent delivery analytics |
+| Docker Compose | Local functional and integration environment once implemented |
+
+PostgreSQL holds accepted events and active delivery state; Kafka messages may repeat, so consumers must be idempotent. The [HLD](RelayForge_High_Level_Design.md) and [LLD](RelayForge_Low_Level_Design.md) contain the detailed contracts.
+
+## Design load estimates
+
+Planning assumes **100 customer accounts**, **10,000 active endpoints**, average fan-out of **3 deliveries per accepted event**, and **1.1 outbound attempts per delivery**. Estimated outbound attempts/s = accepted events/s × 3 × 1.1.
+
+| Profile | Accepted events/s | Estimated outbound attempts/s | Intended use |
+|---|---:|---:|---|
+| Normal | 5,000 | 16,500 | Sustained planning load |
+| Peak | 10,000 | 33,000 | Burst planning load |
+| Headroom | 15,000 | 49,500 | Peak plus 5,000 events/s |
+
+These are design assumptions, not measured capacity. At a continuous normal rate for 90 days, the plan implies about **38.88 billion events**, **116.64 billion deliveries**, and **128.30 billion outbound attempts**, before auxiliary records. Event and delivery history have a planned 90-day PostgreSQL lifecycle; account and configuration records do not. Shard count, hardware, burst duration, and the final throughput claim depend on load tests after functional implementation.
+
+## Local setup
+
+Install **JDK 21** and **Maven**, then run from the repository root:
+
+```bash
+java -version
+mvn -version
+mvn validate
+mvn test
+```
+
+`mvn validate` checks the reactor layout; `mvn test` currently runs against empty modules. There is no runnable API or `compose.yaml` yet, so `docker compose up` is not a supported setup step. The [checklist](RelayForge_Implementation_Checklist.md) tracks the Docker environment and clean-boot checkpoint.
+
+## Navigate the codebase
+
+```text
+RelayForge/
+├── pom.xml                         Maven reactor
+├── relayforge-contracts/            Cross-service message contracts
+├── relayforge-control-plane/        Accounts, keys, endpoints, subscriptions
+├── relayforge-ingestion/            Event acceptance and idempotency
+├── relayforge-ingestion-publisher/  Accepted-event outbox publisher
+├── relayforge-router/               Subscription matching and fan-out
+├── relayforge-delivery-worker/      Webhook execution and attempts
+├── relayforge-delivery-publisher/   Delivery and analytics outbox publisher
+├── relayforge-retry-scheduler/      Due-work and lease recovery
+├── relayforge-analytics-consumer/   Delivery facts into ClickHouse
+├── relayforge-analytics-api/        Analytics queries
+├── docs/diagrams/                  Architecture SVGs
+├── docs/decisions/                 Reviewed design decisions
+├── deploy/                         Planned deployment configuration
+└── load-tests/                     Planned capacity workloads
+```
+
+Each service module has its own `pom.xml` and `src/main/java` and `src/test/java` directories. Start with the [HLD](RelayForge_High_Level_Design.md) for architecture, the [LLD](RelayForge_Low_Level_Design.md) for contracts and schemas, and the [checklist](RelayForge_Implementation_Checklist.md) for implementation order and verification gates.
