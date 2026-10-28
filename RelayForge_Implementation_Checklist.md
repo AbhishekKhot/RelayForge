@@ -25,7 +25,8 @@
 
 - [x] Define HLD §13 storage ownership and transaction boundaries in the LLD: local outboxes, versioned configuration projection and bounded reads, durable payload access, and no cross-service foreign keys.
 - [ ] Replace the LLD's logical SQL examples with deployable, service-owned physical DDL and migration order; verify all cross-service references and local constraints against the target PostgreSQL version.
-- [ ] Specify stable `(organization_id, idempotency_key)` ingestion shard routing, a 90-day shard-local idempotency registry, versioned event/delivery locators, hot-tenant handling, and restart/recovery semantics.
+- [x] Specify stable `(organization_id, idempotency_key)` ingestion shard routing, a 90-day shard-local idempotency registry, versioned event/delivery locators, hot-tenant handling, and restart/recovery semantics.
+- [ ] Before enabling bucket moves, test stale-map rejection, source fencing, registry copy verification, old-locator reads, cutover recovery, and concurrent same-key requests on both sides of expiry.
 - [ ] Finalize daily `accepted_day` partitions for event/delivery history, composite keys, local foreign keys, cross-service ownership checks, partition pre-creation, cutoff-day cleanup, and blocked-drop behavior. Keep configuration tables outside event-age purge.
 - [x] Specify production primary/standby failover and backup strategy per write shard; require synchronous standby WAL confirmation before ingestion `202`, and a retryable failure when no synchronous standby is available. Do not assign an untested shard count.
 - [ ] During Docker failure testing, prove an unavailable synchronous standby blocks ingestion `202`; a commit timeout retries with the same idempotency key; promotion fences the old primary; and an isolated backup/WAL restore recovers committed state.
