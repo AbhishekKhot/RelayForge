@@ -50,17 +50,7 @@ This document describes the system boundary, logical components, data flow, depl
 
 ## 4. System context
 
-```mermaid
-flowchart LR
-    Admin[Organization Admin / Client] -->|Create organization and credentials| API[RelayForge API]
-    Producer[Producer Application] -->|HTTPS: POST /v1/events| API
-    API --> PG[(PostgreSQL)]
-    API -->|202 Accepted after durable commit| Producer
-    Workers[RelayForge Delivery Workers] -->|Signed HTTPS webhook| Receiver[Customer Endpoint]
-    API --> Client[RelayForge Client / Dashboard]
-    Client -->|REST APIs| API
-    API -->|Analytics queries| CH[(ClickHouse)]
-```
+![RelayForge system context](docs/diagrams/system-context.svg)
 
 **External actors**
 
@@ -74,88 +64,7 @@ The diagram below describes data flow. Its single API and PostgreSQL
 symbols represent the logical interface and authoritative storage;
 the physical service and database boundaries are defined in §8 and §13.
 
-```mermaid
-flowchart TB
-    subgraph Edge[API and Control Plane]
-      API[RelayForge API]
-      Auth[Authentication and Authorization]
-      Ingest[Event Ingestion Module]
-      Org[Organization and Credential Module]
-      Config[Endpoint and Subscription Module]
-      Query[Event and Delivery Query Module]
-      Admin[Replay and Audit Module]
-    end
-
-    subgraph Durable[Transactional Store]
-      PG[(PostgreSQL)]
-      Event[(Event records)]
-      Outbox[(Outbox records)]
-      Delivery[(Delivery state and attempts)]
-      ConfigData[(Endpoint and subscription config)]
-      PG --- Event
-      PG --- Outbox
-      PG --- Delivery
-      PG --- ConfigData
-    end
-
-    subgraph Async[Asynchronous Processing]
-      Publisher[Outbox Publisher]
-      EventTopic[(Kafka: event.accepted)]
-      DeliveryTopic[(Kafka: delivery.ready)]
-      AnalyticsTopic[(Kafka: analytics.delivery-facts)]
-      Router[Event Routing Consumer]
-      Worker[Webhook Delivery Worker]
-      Retry[Retry Scheduler / Due-Work Scanner]
-      DLQ[Dead-letter State and Replay]
-    end
-
-    subgraph Analytics[Analytics Path]
-      AnalyticsConsumer[Analytics Consumer]
-      CH[(ClickHouse)]
-    end
-
-    Redis[(Redis: quotas, cache, circuit state)]
-    OrgAdmin[Organization Admin / Client]
-    Producer[Producer Application]
-    Receiver[Customer HTTP Endpoint]
-    AuthServer[Customer Authentication / Token Endpoint]
-    Dashboard[Client / Dashboard]
-
-    OrgAdmin --> API
-    Producer --> API
-    API --> Auth
-    Auth --> Ingest
-    Auth --> Org
-    Auth --> Config
-    Auth --> Query
-    Auth --> Admin
-    Ingest --> PG
-    Org --> PG
-    Config --> PG
-    Query --> PG
-    Admin --> PG
-    API -. rate limits .-> Redis
-    Publisher --> Outbox
-    Publisher --> EventTopic
-    EventTopic --> Router
-    Router --> PG
-    Router -->|delivery outbox rows committed with Delivery rows| Outbox
-    Publisher --> DeliveryTopic
-    DeliveryTopic --> Worker
-    Worker -->|token request when required| AuthServer
-    AuthServer -->|access token| Worker
-    Worker -->|authenticated webhook| Receiver
-    Worker --> PG
-    Worker -->|analytics outbox committed with state change| Outbox
-    Retry --> PG
-    Retry -->|due work via outbox| Outbox
-    Publisher --> AnalyticsTopic
-    AnalyticsTopic --> AnalyticsConsumer
-    AnalyticsConsumer --> CH
-    Query --> CH
-    Dashboard --> API
-    Admin --> DLQ
-```
+![RelayForge logical architecture](docs/diagrams/logical-architecture.svg)
 
 The diagram shows logical responsibilities, not a requirement to deploy every box independently. `Event Routing Consumer`, `Retry Scheduler`, and `Webhook Delivery Worker` can initially be modules/processes within a small number of deployables, provided they can be scaled and operated appropriately.
 
@@ -290,53 +199,11 @@ Do not store the only copy of an accepted event, delivery state, or worker owner
 
 ### 7.1 Event acceptance and durable publication
 
-```mermaid
-sequenceDiagram
-    participant P as Producer
-    participant A as RelayForge API
-    participant PG as PostgreSQL
-    participant O as Outbox Publisher
-    participant K as Kafka (event.accepted)
-
-    P->>A: POST /v1/events + Idempotency-Key
-    A->>A: Authenticate organization API key, validate event type and quota
-    A->>PG: Begin transaction and insert Event + OutboxRecord
-    PG-->>A: COMMIT confirmed
-    A-->>P: 202 Accepted + event_id
-    O->>PG: Claim unpublished outbox batch
-    PG-->>O: Outbox records
-    O->>K: Publish event envelope
-    K-->>O: Broker acknowledgement
-    O->>PG: Mark outbox record published
-```
+![Event acceptance and durable publication](docs/diagrams/event-acceptance.svg)
 
 ### 7.2 Routing and delivery
 
-```mermaid
-sequenceDiagram
-    participant K as Kafka (event.accepted / delivery.ready)
-    participant R as Event Routing Consumer
-    participant PG as PostgreSQL
-    participant W as Webhook Delivery Worker
-    participant T as Customer Auth / Token Endpoint
-    participant E as Customer Webhook Endpoint
-
-    K->>R: Event accepted message
-    R->>PG: Load event and matching subscriptions by organization + event_type
-    R->>PG: Insert Delivery + delivery.ready OutboxRecord atomically
-    Note over PG,K: Outbox Publisher publishes delivery.ready to Kafka
-    K->>W: delivery.ready message
-    W->>PG: Claim Delivery with lease and load endpoint/auth config
-    PG-->>W: Delivery and endpoint metadata
-    opt Token missing or near expiry
-        W->>T: POST configured authentication/token request
-        T-->>W: Access token and optional expiry
-    end
-    W->>E: Authenticated webhook request
-    E-->>W: HTTP response or timeout
-    W->>PG: Persist DeliveryAttempt + state + analytics outbox atomically
-    Note over W,PG: Retryable failure sets next_attempt_at and scheduler later creates delivery.ready outbox work
-```
+![Event routing and webhook delivery](docs/diagrams/routing-delivery.svg)
 
 Delivery-work and analytics publication use transactional outbox records. This avoids a non-atomic PostgreSQL/Kafka dual write. The retry scheduler uses PostgreSQL as the authority for due times and inserts outbox records when work becomes eligible again.
 
