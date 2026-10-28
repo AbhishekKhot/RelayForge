@@ -300,7 +300,7 @@ sequenceDiagram
 
     P->>A: POST /v1/events + Idempotency-Key
     A->>A: Authenticate organization API key, validate event type and quota
-    A->>PG: BEGIN; insert Event + OutboxRecord
+    A->>PG: Begin transaction and insert Event + OutboxRecord
     PG-->>A: COMMIT confirmed
     A-->>P: 202 Accepted + event_id
     O->>PG: Claim unpublished outbox batch
@@ -326,7 +326,7 @@ sequenceDiagram
     R->>PG: Insert Delivery + delivery.ready OutboxRecord atomically
     Note over PG,K: Outbox Publisher publishes delivery.ready to Kafka
     K->>W: delivery.ready message
-    W->>PG: Claim Delivery with lease; load endpoint/auth config
+    W->>PG: Claim Delivery with lease and load endpoint/auth config
     PG-->>W: Delivery and endpoint metadata
     opt Token missing or near expiry
         W->>T: POST configured authentication/token request
@@ -335,7 +335,7 @@ sequenceDiagram
     W->>E: Authenticated webhook request
     E-->>W: HTTP response or timeout
     W->>PG: Persist DeliveryAttempt + state + analytics outbox atomically
-    Note over W,PG: Retryable failure sets next_attempt_at; retry scheduler later creates delivery.ready outbox work
+    Note over W,PG: Retryable failure sets next_attempt_at and scheduler later creates delivery.ready outbox work
 ```
 
 Delivery-work and analytics publication use transactional outbox records. This avoids a non-atomic PostgreSQL/Kafka dual write. The retry scheduler uses PostgreSQL as the authority for due times and inserts outbox records when work becomes eligible again.
