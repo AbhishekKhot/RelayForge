@@ -2,7 +2,7 @@
 
 RelayForge accepts customer events and delivers them as webhooks to registered endpoints. Customers configure accounts, API keys, endpoints, and subscriptions; producers submit events with an idempotency key. RelayForge durably accepts each event before routing it to matching endpoints, retrying eligible failures, and recording delivery history and analytics.
 
-The repository is currently a Maven module scaffold. The services, database migrations, Docker images, and end-to-end tests are planned but are not implemented yet. Follow the [implementation checklist](RelayForge_Implementation_Checklist.md) for the build sequence.
+The repository has runnable Spring Boot role scaffolds and a shared image build. Business endpoints, database migrations, Compose, and end-to-end tests are still implementation tasks. Follow the [implementation checklist](RelayForge_Implementation_Checklist.md) for the build sequence.
 
 ## High-level design
 
@@ -50,13 +50,17 @@ mvn validate
 mvn test
 ```
 
-`mvn validate` checks the reactor layout; `mvn test` currently runs against empty modules. There is no runnable API or `compose.yaml` yet, so `docker compose up` is not a supported setup step. The [checklist](RelayForge_Implementation_Checklist.md) tracks the Docker environment and clean-boot checkpoint.
+`mvn validate` checks the reactor layout and Java Checkstyle rules; `.editorconfig` defines four-space indentation. `mvn test` runs the bootstrap behavior tests. Each deployable module now has a Spring Boot entry point. To run the control-plane bootstrap locally, use `mvn package` followed by `java -jar relayforge-control-plane/target/relayforge-control-plane-0.1.0-SNAPSHOT.jar`, then inspect `http://localhost:8080/health/live`. Database and broker clients are added in later checkpoints, so readiness currently reflects process startup only.
+
+Build a role image with `docker build -f deploy/Dockerfile.service --build-arg MODULE=relayforge-control-plane -t relayforge/control-plane:dev .`. Replace the module and image name for another role. `compose.yaml` and dependency-backed readiness belong to the D0 checkpoint after A2; `docker compose up` is not supported yet. The [checklist](RelayForge_Implementation_Checklist.md) tracks that gate.
 
 ## Navigate the codebase
 
 ```text
 RelayForge/
 ├── pom.xml                         Maven reactor
+├── relayforge-runtime/              Validated runtime settings
+├── relayforge-api-support/          Shared HTTP errors, request IDs, health
 ├── relayforge-contracts/            Cross-service message contracts
 ├── relayforge-control-plane/        Accounts, keys, endpoints, subscriptions
 ├── relayforge-control-publisher/    Configuration outbox publisher
@@ -71,8 +75,8 @@ RelayForge/
 ├── relayforge-analytics-api/        Analytics queries
 ├── docs/diagrams/                  Architecture SVGs
 ├── docs/decisions/                 Reviewed design decisions
-├── deploy/                         Planned deployment configuration
+├── deploy/                         Image build and planned Compose setup
 └── load-tests/                     Planned capacity workloads
 ```
 
-Each service module has its own `pom.xml` and `src/main/java` and `src/test/java` directories. Start with the [HLD](RelayForge_High_Level_Design.md) for architecture, the [LLD](RelayForge_Low_Level_Design.md) for contracts and schemas, and the [checklist](RelayForge_Implementation_Checklist.md) for implementation order and verification gates.
+Each service module has its own `pom.xml` and `src/main/java` directory; tests live under `src/test/java`. Start with the [HLD](RelayForge_High_Level_Design.md) for architecture, the [LLD](RelayForge_Low_Level_Design.md) for contracts and schemas, and the [checklist](RelayForge_Implementation_Checklist.md) for implementation order and verification gates.
