@@ -1,19 +1,17 @@
 # RelayForge --- Low-Level Design (LLD)
 
-**Document version:** 1.6\
-**Status:** Implementation baseline — aligned with final v1 decisions\
-**Aligned documents:** RelayForge High-Level Design v3.3;
+**Status:** Implementation design awaiting physical-schema review\
+**Aligned documents:** RelayForge High-Level Design;
 RelayForge Implementation Checklist\
 **Primary stack:** Java 21, Spring Boot, PostgreSQL, Kafka, Redis,
 ClickHouse\
 **Design principle:** PostgreSQL is authoritative; Kafka transports
 work; ClickHouse serves eventually consistent analytics.
 
-**Capacity scope:** The SQL below is a logical field/transaction reference,
-not deployable partitioned DDL. HLD §13 defines service ownership and the
-90-day PostgreSQL lifecycle. Do not apply cross-service foreign keys or
-start Milestone A until the physical schema gate resolves shard routing,
-partition keys, idempotency, retention, and payload access.
+**Capacity scope:** Section 5.1–5.11 contains logical field examples;
+the service-owned physical SQL in [`docs/schema/`](docs/schema/README.md)
+is the migration source. HLD §13 defines the load and lifecycle contract.
+Review and validate the physical schema gate before Milestone A.
 
 ------------------------------------------------------------------------
 
@@ -25,7 +23,7 @@ structures, API contracts, message envelopes, transaction boundaries,
 delivery state transitions, authentication handling, retry behavior,
 security controls, and testing requirements.
 
-This is the implementation contract for RelayForge v1. Implementation and benchmark completion are tracked separately in `RelayForge_Implementation_Checklist.md`.
+This is the implementation contract for RelayForge. Implementation and benchmark completion are tracked separately in `RelayForge_Implementation_Checklist.md`.
 
 ### 1.1 In scope
 
@@ -41,7 +39,7 @@ This is the implementation contract for RelayForge v1. Implementation and benchm
 -   Delivery history and ClickHouse analytics.
 -   Security, observability, and automated tests.
 
-### 1.2 Out of scope for v1
+### 1.2 Out of scope for the initial release
 
 -   Active-active multi-region deployment.
 -   Exactly-once external side effects.
@@ -63,7 +61,7 @@ This is the implementation contract for RelayForge v1. Implementation and benchm
 ## 2. Key design decisions
 
   --------------------------------------------------------------------------------
-  Decision                v1 choice                        Reason
+  Decision                Initial choice                   Reason
   ----------------------- -------------------------------- -----------------------
   Source of truth         PostgreSQL                       Transactions for
                                                            accepted events,
@@ -154,58 +152,28 @@ been published yet.
 
 ## 3. Suggested repository and package structure
 
-The layout below is a legacy functional package map, not the high-volume
-physical deployment layout. HLD §13 and §8 now define four data-owning
-services and separate images for worker roles. Move each package and its
-tables under its owner during the capacity architecture gate; do not
-deploy all roles against one shared schema by default.
+The Maven reactor matches the four ownership boundaries. Runtime roles
+use separate images, while roles inside one boundary share that owner's
+database and contracts. Each owner keeps Flyway migrations in its own
+module; the SQL templates in `docs/schema/` are the physical reference.
 
 ``` text
-relayforge/
-├── relayforge-api/
-│   └── src/main/java/com/relayforge/api/
-│       ├── RelayForgeApiApplication.java
-│       ├── config/
-│       ├── security/
-│       ├── controller/
-│       │   ├── OrganizationController.java
-│       │   ├── EndpointController.java
-│       │   ├── EventController.java
-│       │   ├── DeliveryController.java
-│       │   └── AnalyticsController.java
-│       ├── dto/
-│       └── exception/
-├── relayforge-core/
-│   └── src/main/java/com/relayforge/
-│       ├── organization/
-│       │   ├── domain/
-│       │   ├── application/
-│       │   ├── persistence/
-│       │   └── security/
-│       ├── endpoint/
-│       ├── subscription/
-│       ├── event/
-│       ├── delivery/
-│       ├── authentication/
-│       ├── outbox/
-│       ├── replay/
-│       ├── analytics/
-│       ├── security/
-│       └── common/
-├── relayforge-outbox-publisher/
-├── relayforge-routing-worker/
+RelayForge/
+├── relayforge-control-plane/
+├── relayforge-control-publisher/
+├── relayforge-ingestion/
+├── relayforge-ingestion-publisher/
+├── relayforge-router/
+├── relayforge-delivery-api/
 ├── relayforge-delivery-worker/
+├── relayforge-delivery-publisher/
 ├── relayforge-retry-scheduler/
 ├── relayforge-analytics-consumer/
+├── relayforge-analytics-api/
 ├── relayforge-contracts/
-│   └── src/main/java/com/relayforge/contracts/
-│       ├── events/
-│       ├── delivery/
-│       └── analytics/
-├── db/migration/
+├── docs/schema/
 ├── deploy/
-├── load-tests/
-└── docs/
+└── load-tests/
 ```
 
 ### 3.1 Dependency direction
@@ -353,11 +321,10 @@ with prefixes for readability. If prefixed IDs are adopted, store UUIDs
 internally and map the prefix at the API boundary.
 
 The following schema lists logical fields and example constraints from the
-initial single-database model. It is not deployable across service-owned
-databases. Time-partitioned
-primary and unique keys must include the partition key. Section 5.13
-defines the replacement ownership and access contract; remaining physical
-keys and DDL must pass the capacity gate before Flyway migrations.
+initial single-database model. Use the PostgreSQL 17 templates in
+[`docs/schema/`](docs/schema/README.md) for physical keys, local foreign
+keys, and partition creation. These examples are not Flyway migrations.
+Section 5.13 defines ownership and access contracts.
 
 ### 5.1 `organizations`
 
@@ -415,7 +382,7 @@ CREATE INDEX idx_users_org_status ON users(organization_id, status);
 
 The initial user endpoint is a trusted provisioning API. This table does
 not by itself define password storage, sessions, SSO, or a complete
-identity lifecycle; those remain outside the delivery pipeline's v1
+identity lifecycle; those remain outside the initial delivery pipeline
 scope. Normalize email consistently before enforcing uniqueness.
 
 ### 5.4 `endpoints`
@@ -460,7 +427,7 @@ Persist the wrapped DEK, ciphertext, algorithm/key version, and nonce as
 needed by the selected authenticated-encryption implementation. Support
 key rotation by rewrapping DEKs or re-encrypting configuration. Never log
 plaintext configuration or cryptographic material. - `auth_secret_ref`
-is not used in the v1 envelope-encryption path. - Do not allow untrusted
+is not used in the initial envelope-encryption path. - Do not allow untrusted
 users to override reserved RelayForge headers (`X-RelayForge-*`, `Host`,
 `Content-Length`, `Connection`, etc.). - Endpoint URL validation must be
 repeated at delivery time to defend against DNS changes; do not rely
@@ -526,7 +493,24 @@ body differs, return `409 IDEMPOTENCY_KEY_REUSED`. Canonicalization must
 be stable and documented; do not hash arbitrary JSON serialization whose
 key order may vary.
 
-For v1, payloads are stored in PostgreSQL JSONB with a strict size cap.
+Canonical request hash format 1 is SHA-256 of RFC 8785 JSON
+canonicalization over an object containing `event_type`, resolved
+`schema_version` (default `1`), `data`, and `occurred_at` only when the
+client supplies it. Normalize a supplied timestamp to UTC with at most
+microsecond precision before canonicalization. Exclude server-generated
+`accepted_at`, authorization, and the idempotency key. Reject duplicate
+JSON property names, invalid Unicode, and numeric values outside the
+I-JSON range required by RFC 8785. Store `request_hash_version = 1` in
+the shard-local registry. For example,
+`{"data":{"a":1,"b":2},"event_type":"order.created","schema_version":1}`
+hashes to
+`8b3bea11df1868a5726ddca10480859e250e30242b8a0b867c87bea11453e21d`.
+Use `io.github.erdtman:java-json-canonicalization:1.1` behind a small
+adapter and verify it against RFC vectors before use.
+[RFC 8785](https://www.rfc-editor.org/rfc/rfc8785),
+[Java canonicalization artifact](https://central.sonatype.com/artifact/io.github.erdtman/java-json-canonicalization/1.1).
+
+Initially, payloads are stored in PostgreSQL JSONB with a strict size cap.
 Published event history and related delivery diagnostics expire 90 days
 after RelayForge's `accepted_at`, regardless of client `occurred_at`.
 Idempotency keys remain unique for 90 days in a separate shard-local
@@ -723,7 +707,8 @@ include secrets in `details`.
     organizations, API keys, users, endpoints, or subscriptions. Keep
     account/configuration audit records under a separate policy. Check
     live work and references before detaching historical partitions;
-    use bounded cleanup for partial cutoff days and published outbox.
+    use the documented physical-deletion grace for partial cutoff days
+    and bounded cleanup for published outbox.
 -   Use Flyway migrations with forward-only schema changes in normal
     deployment.
 -   Add indexes based on query plans and the final load tests; each index adds
@@ -733,12 +718,16 @@ include secrets in `details`.
     configuration.
 -   Avoid using JSONB for high-cardinality fields used frequently in
     joins or predicates.
--   For the HLD §13 profile, design partition/shard keys, composite
-    uniqueness, and foreign-key scope before implementation. PostgreSQL
-    partitioned-table uniqueness must include the partition key. Size
-    the physical topology using measured row sizes and final load tests.
+-   The PostgreSQL 17 physical templates define partition/shard keys,
+    composite uniqueness, and local foreign-key scope. Size the physical
+    topology using measured row sizes and final load tests.
 
 ### 5.13 Physical PostgreSQL design gate
+
+The executable PostgreSQL 17 schema templates and retention/migration
+order are in [`docs/schema/`](docs/schema/README.md). They supersede the
+logical examples above for physical constraints and indexes. Gate review
+must inspect those templates and the contracts below together.
 
 #### Storage ownership and transaction boundaries
 
@@ -751,7 +740,7 @@ permit cross-database joins, foreign keys, or transactions.
 |---|---|---|
 | Control plane | `organizations`, `api_keys`, `users`, `endpoints`, `subscriptions`, `shard_bucket_map`, account/configuration `audit_records`, `control_outbox` | Provisioning, endpoint and subscription changes, and their configuration-change outbox records commit locally. Bucket-map changes use a fenced operational workflow. |
 | Ingestion | `bucket_fence`, `idempotency_registry`, `events`, `ingestion_outbox` | Registry claim, event payload, and `event.accepted` outbox record commit on the selected ingestion shard before `202`. |
-| Delivery | `routing_progress`, `routing_targets`, `deliveries`, `delivery_attempts`, `authentication_attempts`, `replay_requests`, delivery replay audit, `delivery_outbox`, `subscription_projection` | Router, worker, scheduler, replay, and delivery publisher commit state and messages on the selected delivery shard. |
+| Delivery | `routing_progress`, `routing_targets`, `deliveries`, `delivery_work`, `delivery_attempts`, `authentication_attempts`, `replay_requests`, delivery replay audit, `delivery_outbox`, `endpoint_projection`, `subscription_projection` | Router, worker, scheduler, replay, and delivery publisher commit state and messages on the selected delivery shard. |
 | Analytics | ClickHouse delivery facts and query models | Kafka facts are deduplicated by their stable fact identity; no PostgreSQL transaction spans analytics. |
 
 The generic `outbox` example in §5.10 is a template for the three local
@@ -763,11 +752,27 @@ bounded internal reads; a lagging delivery view is reported as pending.
 
 #### Cross-service data contracts
 
-Control-plane changes publish a versioned configuration event from
-`control_outbox`. The router applies it idempotently to a durable
-`subscription_projection` keyed by `(organization_id, subscription_id)`;
-each row carries `endpoint_id`, `event_type`, filter, status, and monotonically
-increasing source version. In one delivery transaction, routing records
+Control-plane changes publish a versioned, secret-free configuration
+snapshot from `control_outbox`. The router applies it idempotently to
+durable `endpoint_projection` and `subscription_projection` tables keyed
+by organization and resource ID; the router selects only active endpoints
+and subscriptions. Each subscription projection row carries
+`endpoint_id`, `event_type`, filter, status, and monotonically
+increasing source version. Each endpoint/subscription change increments
+`organizations.config_revision` and writes an outbox message containing
+that organization revision in the same control-plane transaction. The
+configuration topic is keyed by organization ID; `projection_state`
+tracks the last contiguous revision, and any gap pauses that organization's
+routing until a bounded snapshot repair catches up. Every delivery shard
+that owns buckets for an organization maintains its own projection and
+consumer offset; a new shard bootstraps a snapshot before accepting routes.
+Apply a snapshot and advance `projection_state` in one local transaction;
+commit its Kafka offset only after that transaction commits. Duplicate
+or older revisions are ignored, and endpoint/subscription tombstones are
+retained until all event cohorts that referenced them have expired.
+Keep the configuration topic's partition count stable during normal
+operation so per-organization ordering does not change unexpectedly. In
+one delivery transaction, routing records
 the selected `(subscription_id, endpoint_id, source_version)` rows in
 `routing_targets` and a cursor in `routing_progress`. Later chunks use
 those persisted targets; redelivery cannot silently change fan-out. A
@@ -783,8 +788,8 @@ Kafka or the subscription projection. Control-plane responses and caches
 must be scoped by organization and have explicit size and timeout limits.
 
 `event.accepted` carries organization ID, event ID, acceptance cohort,
-ingestion locator version, event type, and payload digest/reference. The
-ingestion service exposes an authenticated internal payload read by this
+exact `accepted_at`, ingestion locator version, event type, and payload
+digest/reference. The ingestion service exposes an authenticated internal payload read by this
 locator; it checks organization and event identity, returns the immutable
 payload only while retained, and uses bounded response size and deadline.
 The router retrieves it when filters need payload fields; the worker
@@ -807,6 +812,7 @@ database transaction across an internal read or Kafka publish.
 | `organizations`, `api_keys`, `users`, `endpoints`, `subscriptions`, `shard_bucket_map` | Control-plane configuration and routing metadata; no event-age purge |
 | `events` | Ingestion history; 90 days from `accepted_at` |
 | `deliveries`, `delivery_attempts`, `authentication_attempts`, `replay_requests` | Delivery history; expire with the source event's acceptance cohort |
+| `delivery_work` | Active due/lease index; remove rows on terminal outcomes, never age-purge live work |
 | `outbox` | Owner-local work; delete published rows after recovery checks, never pending rows by age |
 | `audit_records` | Retain account/configuration actions separately; event-specific details follow event lifecycle |
 
@@ -815,9 +821,10 @@ Physical migrations MUST implement these contracts before Milestone A:
 1. Give historical rows an immutable UTC `accepted_day` copied from the
    event; time-partition high-volume ingestion and delivery tables by
    day within their owning write shard. Pre-create partitions and remove
-   fully expired cohorts only after active-work/reference checks. Define
-   bounded deletion or a monitored physical-deletion grace period for
-   the partial cutoff day. Replay cannot extend the source event's
+   fully expired cohorts only after active-work/reference checks. The
+   partially expired day has a planned 25-hour physical-deletion grace;
+   logical reads and replay stop at exactly 2,160 hours. Replay cannot
+   extend the source event's
    retention window.
 2. Route ingestion by stable hash of `(organization_id, idempotency_key)`
    to a shard. Commit the idempotency registry, event, and ingestion
@@ -1222,7 +1229,7 @@ outbound webhook signing secret) - `GET /v1/subscriptions` - Optional
 explicit subscription APIs if endpoint registration does not atomically
 create subscriptions.
 
-Recommended v1: `POST /v1/endpoints` atomically creates endpoint and
+`POST /v1/endpoints` atomically creates an endpoint and
 subscriptions for all provided `event_types`. If any event type is
 invalid, roll back the entire registration rather than leaving a
 partially registered endpoint. Subsequent subscription changes use
@@ -1235,13 +1242,19 @@ a disabled endpoint during unrelated updates.
 
 ### 6.7 Delivery query and replay
 
+`relayforge-delivery-api` owns delivery reads and replay writes. The
+ingestion API composes its event acceptance response with a bounded
+internal delivery summary read; it does not query the delivery database.
+
 -   `GET /v1/events/{event_id}`: event status and delivery summary from
-    PostgreSQL.
+    ingestion acceptance plus delivery-owned progress.
 -   `GET /v1/deliveries?status=&endpoint_id=&from=&to=&limit=&cursor=`:
     cursor-paginated delivery list.
 -   `GET /v1/deliveries/{delivery_id}`: delivery state and attempts.
--   `POST /v1/deliveries/{delivery_id}/replay`: create a new generation,
-    return `202 Accepted`.
+-   `POST /v1/deliveries/{delivery_id}/replay`: require an
+    `Idempotency-Key` scoped to the source delivery, create a new
+    generation, and return `202 Accepted`. The same key returns the same
+    replay; a changed request body conflicts.
 
 Replay request:
 
@@ -1283,7 +1296,10 @@ delivery pipelines.
 
 ### 7.1 Kafka topics
 
-Suggested topic names: - `relayforge.event.accepted.v1` -
+Topic names and transport/recovery policy are fixed in
+[`docs/decisions/kafka-transport.md`](docs/decisions/kafka-transport.md).
+The topics are: - `relayforge.config.changed.v1` -
+`relayforge.event.accepted.v1` -
 `relayforge.delivery.ready.v1` -
 `relayforge.analytics.delivery-facts.v1`
 
@@ -1323,6 +1339,7 @@ Payload:
   "organization_id": "org_...",
   "event_id": "evt_...",
   "accepted_day": "2026-10-28",
+  "accepted_at": "2026-10-28T10:00:01Z",
   "ingestion_locator_version": 1,
   "bucket_id": 3410,
   "map_epoch": 1,
@@ -1574,25 +1591,49 @@ by PostgreSQL state and lease claims.
 
 ### 9.2 Claim query
 
-Use a conditional update or `SELECT ... FOR UPDATE SKIP LOCKED` with a
-lease token. Example for one delivery:
+`delivery_work` is the compact authoritative index of active due and
+leased work; history remains in day-partitioned `deliveries`. This keeps
+the hot claim/scheduler query from scanning up to 91 daily partitions.
+Insert a work row with each new delivery and remove it in the same local
+transaction as a terminal delivery result. All claim, retry, lease-renewal,
+and terminal transitions lock `delivery_work` first, then the referenced
+`deliveries` row by `(accepted_day, id)`, and update both or neither.
+The work row is not a second source of delivery history; bounded periodic
+reconciliation compares active deliveries with work rows by cohort and
+alarms on any mismatch.
+Example claim transaction:
 
 ``` sql
-UPDATE deliveries
-SET status = 'IN_PROGRESS',
-    lease_owner = :worker_id,
-    lease_token = :lease_token,
-    lease_expires_at = now() + :lease_interval,
-    claim_count = claim_count + 1,
-    updated_at = now(),
-    version = version + 1
-WHERE id = :delivery_id
+BEGIN;
+SELECT accepted_day, delivery_id
+FROM delivery_work
+WHERE delivery_id = :delivery_id
   AND status IN ('PENDING', 'ENQUEUED', 'RETRY_SCHEDULED')
-  AND next_attempt_at <= now()
-RETURNING *;
+  AND next_attempt_at <= clock_timestamp()
+  AND event_expires_at > clock_timestamp()
+FOR UPDATE;
+UPDATE delivery_work
+SET status = 'IN_PROGRESS', lease_owner = :worker_id,
+    lease_token = :lease_token,
+    lease_expires_at = :lease_expires_at,
+    claim_count = claim_count + 1, updated_at = clock_timestamp()
+WHERE delivery_id = :delivery_id
+  AND status IN ('PENDING', 'ENQUEUED', 'RETRY_SCHEDULED')
+  AND next_attempt_at <= clock_timestamp()
+  AND event_expires_at > clock_timestamp();
+UPDATE deliveries
+SET status = 'IN_PROGRESS', lease_owner = :worker_id,
+    lease_token = :lease_token, lease_expires_at = :lease_expires_at,
+    claim_count = claim_count + 1, updated_at = clock_timestamp(),
+    version = version + 1
+WHERE accepted_day = :accepted_day AND id = :delivery_id
+  AND status IN ('PENDING', 'ENQUEUED', 'RETRY_SCHEDULED');
+COMMIT;
 ```
 
-A production implementation must ensure a ready Kafka message cannot
+The implementation binds one calculated lease expiry to both updates and
+rolls back unless exactly one eligible work row and one matching delivery
+row were updated. A production implementation must ensure a ready Kafka message cannot
 bypass `next_attempt_at`; a non-due message should be acknowledged or
 deferred without spinning, because the scheduler will emit a new message
 when due.
@@ -1696,11 +1737,11 @@ loops.
 
 ### 10.4 Retry scheduler
 
-The scheduler scans due deliveries with an index-friendly bounded query:
+The scheduler scans the compact work index with a bounded query:
 
 ``` sql
-SELECT id
-FROM deliveries
+SELECT delivery_id, accepted_day
+FROM delivery_work
 WHERE status = 'RETRY_SCHEDULED'
   AND next_attempt_at <= now()
 ORDER BY next_attempt_at
@@ -1708,13 +1749,16 @@ FOR UPDATE SKIP LOCKED
 LIMIT :batch_size;
 ```
 
-For each selected delivery, in the same transaction: 1. Transition it to
-`ENQUEUED` (or the chosen ready state). 2. Insert `delivery.ready`
-outbox record. 3. Commit.
+For each selected delivery, in the same transaction: 1. Transition
+`delivery_work` and its day-partitioned `deliveries` row to `ENQUEUED`.
+2. Insert a `delivery.ready` outbox record. 3. Commit.
 
-Run a separate bounded scan for expired leases. Recover only rows where
+Run a separate bounded scan of `delivery_work` for expired leases. Recover only rows where
 `status='IN_PROGRESS' AND lease_expires_at < now()`. Apply a
 compare-and-set to prevent racing a live worker heartbeat.
+At `event_expires_at`, stop new sends, finalize active work with an
+explicit terminal outcome after its lease resolves, publish final facts,
+and remove its work row in the same local transaction.
 
 ------------------------------------------------------------------------
 
@@ -1806,8 +1850,25 @@ unverified JWT claim as the sole source of authorization or expiry.
 
 ### 11.4 Secret lifecycle
 
--   Encrypt credentials using a managed key or store them in a secret
-    manager.
+-   Encrypt endpoint credentials and signing secrets with Java 21
+    `AES/GCM/NoPadding`, a fresh random 256-bit data key per configuration
+    version, a fresh 96-bit nonce per encryption, and a 128-bit tag. Bind
+    organization ID, endpoint ID, field name, and configuration version
+    as authenticated associated data. Persist ciphertext, nonce, wrapped
+    data key, and key version; never persist plaintext keys.
+-   A production `KeyEncryptionService` adapter wraps/unwraps data keys
+    through an external managed key service. Its provider is deployment
+    configuration, so no cloud vendor is baked into the data format.
+    The local provider reads a test-only key from the development
+    environment and must refuse production mode. Key-service failure
+    prevents new secret writes and makes unavailable secrets retryable
+    delivery work rather than sending without authentication.
+-   Rotate the wrapping key by rewrapping stored data keys. Rotate a
+    compromised endpoint secret by replacing its encrypted value,
+    incrementing configuration/credential versions, invalidating token
+    caches, and recording a redacted audit entry. Keep old wrapping keys
+    available until all rows and retained backups that depend on them
+    have been rewrapped or expired.
 -   Include a config/credential version in cache keys so secret rotation
     invalidates old tokens.
 -   Never return credentials from `GET /v1/endpoints`.
@@ -1816,6 +1877,13 @@ unverified JWT claim as the sole source of authorization or expiry.
 -   Redact auth request bodies and responses from application logs.
 -   Token request destinations require the same SSRF protections as
     webhook destinations.
+
+Use `com.jayway.jsonpath:json-path:3.0.0` only to read bounded token
+responses. Accept definite property/index paths; reject filters,
+recursive descent, functions, scripts, and paths that return multiple
+values. Validate paths at endpoint registration and cap response bytes
+before parsing. [Java GCM parameters](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/javax/crypto/spec/GCMParameterSpec.html),
+[JsonPath 3.0.0 artifact](https://central.sonatype.com/artifact/com.jayway.jsonpath/json-path/3.0.0).
 
 ------------------------------------------------------------------------
 
@@ -2081,7 +2149,7 @@ call `argMax` separately on nullable columns.
 ### 14.4 Optional daily rollup table (deferred)
 
 Do not create an incremental materialized view directly over the raw
-fact table for correctness-sensitive counts in v1: duplicate Kafka
+fact table for correctness-sensitive counts in the initial release: duplicate Kafka
 inserts can be counted before `ReplacingMergeTree` background merges
 remove them. If dashboard load later justifies pre-aggregation, add a
 `delivery_daily_rollups` table populated by a repeatable scheduled job
@@ -2122,7 +2190,7 @@ this additional state.
 
 ### 15.2 Payload and request limits
 
-Initial proposed limits (validate against product requirements): - Event
+Initial limits: - Event
 payload: 256 KiB. - Endpoint/auth configuration: 64 KiB. - Token
 response: 64 KiB. - Customer response excerpt stored: 4 KiB. - API list
 page size: default 50, maximum 200. - Time-series query: bounded time
@@ -2148,12 +2216,35 @@ PostgreSQL `organizations.quota_config` is authoritative. Redis caches
 resolved quota configuration by organization ID and configuration
 version with a bounded TTL. Organization creation resolves plan defaults
 and applies any validated explicit overrides. On a cache miss, load from
-PostgreSQL and populate Redis. On Redis failure, fall back to PostgreSQL
-with bounded load protection; if PostgreSQL is unavailable, fail closed
-for quota-sensitive write operations rather than bypassing limits.
+PostgreSQL and populate Redis. Redis also coordinates the distributed
+per-organization event token bucket and in-flight delivery permits.
+PostgreSQL can supply the configuration during a cache outage, but it
+cannot by itself enforce a distributed rate counter. If Redis
+coordination is unavailable, reject new quota-sensitive event writes
+with a retryable error and pause new worker claims; already claimed
+deliveries may finish. Reconcile permits from PostgreSQL lease state on
+recovery. If PostgreSQL is unavailable, fail closed for quota-sensitive
+write operations rather than bypassing limits.
 Invalidate or version-bump the cache when quota configuration changes.
-Exact plan values and hard maximums are deployment configuration and
-must be defined before production rollout.
+The initial plan values below are configuration defaults, subject to
+functional tests and the final load benchmark. They bound each tenant;
+the global admission ceiling is set from measured capacity.
+
+| Plan/limit | Events per minute | Burst events | Active endpoints | In-flight deliveries |
+|---|---:|---:|---:|---:|
+| `FREE` default | 600 | 20 | 25 | 100 |
+| `STANDARD` default | 6,000 | 200 | 100 | 1,000 |
+| Platform maximum for an approved override | 60,000 | 2,000 | 1,000 | 20,000 |
+
+Use a per-organization token bucket with a refill rate of
+`events_per_minute / 60` and capacity `burst_events`; do not treat the
+one-minute allowance as a one-request burst. Enforce endpoint count in
+the control-plane transaction. In-flight permits gate worker claims,
+while PostgreSQL delivery leases remain the source of truth for recovery.
+At
+the planning profile, 100 STANDARD accounts at 100 events/s each reach
+the 10,000 events/s peak; the 15,000 events/s headroom test uses explicit
+overrides. These arithmetic allocations do not prove backend capacity.
 
 ### 16.2 Metrics
 
@@ -2328,7 +2419,7 @@ The following final decisions are part of this LLD:
    events and delivery history. Configuration tables are not age-purged.
 10. Purge eligible published outbox rows on an operational schedule;
     unpublished rows are never purged by age alone.
-11. No ordering guarantee in v1.
+11. No ordering guarantee in the initial release.
 12. Quotas are persisted in PostgreSQL (`organizations.quota_config`)
     and cached in Redis. Plan defaults apply unless overrides are
     explicitly supplied during organization creation. Redis is an
@@ -2344,17 +2435,13 @@ The following final decisions are part of this LLD:
     per-key distributed coordination, cache re-check after lock, and
     early refresh reduce stampedes.
 
-Implementation design and configuration still required before Milestone A:
-- Finalize physical DDL for event/idempotency shard routing, daily event
-  cohorts, delivery history, payload access, hot-tenant policy, and
-  90-day retention of billions of rows.
-- Keep each service's event/outbox transaction local to its own database.
-- Set concrete quota defaults and hard platform maximums in configuration and tests.
-- Select the envelope-encryption algorithm/key provider and document key rotation.
-- Select and pin the JSONPath library used only for token-response extraction.
-- Measure ClickHouse query-time deduplication cost and record benchmark evidence.
-- Benchmark retention cleanup, disk growth, and query-time `FINAL` after
-  all functional and end-to-end tests pass.
+The remaining work is implementation and measurement: convert
+[`docs/schema/`](docs/schema/README.md) to service-owned Flyway migrations,
+bind the production key provider to the deployment environment, and test
+the documented quota and security contracts. Measure ClickHouse query-time
+deduplication, retention cleanup, disk growth, and `FINAL` cost after the
+functional and end-to-end suites pass. Those outcomes may require a
+reviewed design change; no throughput or recovery time is claimed here.
 
 ------------------------------------------------------------------------
 
@@ -2388,7 +2475,7 @@ The first end-to-end release is complete when:
 
 ## References
 
-The design is based on RelayForge High-Level Design v3.3 and the
+The design is based on RelayForge High-Level Design and the
 implementation checklist. External technology documentation to consult
 during implementation:
 

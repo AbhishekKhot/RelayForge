@@ -25,7 +25,7 @@ The repository is currently a Maven module scaffold. The services, database migr
 | ClickHouse | Eventually consistent delivery analytics |
 | Docker Compose | Local functional and integration environment once implemented |
 
-PostgreSQL holds accepted events and active delivery state; Kafka messages may repeat, so consumers must be idempotent. The [HLD](RelayForge_High_Level_Design.md) and [LLD](RelayForge_Low_Level_Design.md) contain the detailed contracts.
+PostgreSQL holds accepted events and active delivery state; Kafka messages may repeat, so consumers must be idempotent. The [HLD](RelayForge_High_Level_Design.md), [LLD](RelayForge_Low_Level_Design.md), [physical schema plan](docs/schema/README.md), and [image matrix](deploy/README.md) contain the detailed contracts.
 
 ## Design load estimates
 
@@ -37,7 +37,7 @@ Planning assumes **100 customer accounts**, **10,000 active endpoints**, average
 | Peak | 10,000 | 33,000 | Burst planning load |
 | Headroom | 15,000 | 49,500 | Peak plus 5,000 events/s |
 
-These are design assumptions, not measured capacity. At a continuous normal rate for 90 days, the plan implies about **38.88 billion events**, **116.64 billion deliveries**, and **128.30 billion outbound attempts**, before auxiliary records. Event and delivery history have a planned 90-day PostgreSQL lifecycle; account and configuration records do not. Shard count, hardware, burst duration, and the final throughput claim depend on load tests after functional implementation.
+These are design assumptions, not measured capacity. At a continuous normal rate for 90 days, the plan implies about **38.88 billion events**, **116.64 billion deliveries**, and **128.30 billion outbound attempts**, before auxiliary records. Event and delivery history become unavailable after 90 days; daily partition removal normally has a planned physical grace of up to 25 hours, with blocked drops treated as incidents. Account and configuration records are not age-purged. Shard count, hardware, burst duration, and the final throughput claim depend on load tests after functional implementation.
 
 ## Local setup
 
@@ -59,9 +59,11 @@ RelayForge/
 ├── pom.xml                         Maven reactor
 ├── relayforge-contracts/            Cross-service message contracts
 ├── relayforge-control-plane/        Accounts, keys, endpoints, subscriptions
+├── relayforge-control-publisher/    Configuration outbox publisher
 ├── relayforge-ingestion/            Event acceptance and idempotency
 ├── relayforge-ingestion-publisher/  Accepted-event outbox publisher
 ├── relayforge-router/               Subscription matching and fan-out
+├── relayforge-delivery-api/         Delivery queries and replay
 ├── relayforge-delivery-worker/      Webhook execution and attempts
 ├── relayforge-delivery-publisher/   Delivery and analytics outbox publisher
 ├── relayforge-retry-scheduler/      Due-work and lease recovery

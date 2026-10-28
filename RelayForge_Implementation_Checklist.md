@@ -1,7 +1,7 @@
 # RelayForge — Implementation Checklist and Docker Verification Plan
 
-**Baseline:** HLD v3.3 · LLD v1.6 · planning load profile in HLD §13
-**Purpose:** Implement in small, testable increments. Do not start the next checkpoint until the current checkpoint passes in Docker.  
+**Basis:** HLD, LLD, PostgreSQL templates in `docs/schema/`, and the planning load profile in HLD §13
+**Purpose:** Implement in small, testable increments. Complete A1 and A2 before D0; then finish each dependent checkpoint in Docker before moving on.
 **Status convention:** `[ ]` not started · `[x]` implemented and verified · `[!]` blocked or design deviation. Do not mark a task complete because code compiles; complete its stated checkpoint.
 
 ## 1. Implementation rules
@@ -24,31 +24,33 @@
 ### Capacity architecture gate before D0 and Milestone A
 
 - [x] Define HLD §13 storage ownership and transaction boundaries in the LLD: local outboxes, versioned configuration projection and bounded reads, durable payload access, and no cross-service foreign keys.
-- [ ] Replace the LLD's logical SQL examples with deployable, service-owned physical DDL and migration order; verify all cross-service references and local constraints against the target PostgreSQL version.
+- [x] Provide service-owned PostgreSQL 17 physical DDL templates and migration order in `docs/schema/`; keep cross-service references out of foreign keys and verify local constraints against PostgreSQL 17.
 - [x] Specify stable `(organization_id, idempotency_key)` ingestion shard routing, a 90-day shard-local idempotency registry, versioned event/delivery locators, hot-tenant handling, and restart/recovery semantics.
 - [ ] Before enabling bucket moves, test stale-map rejection, source fencing, registry copy verification, old-locator reads, cutover recovery, and concurrent same-key requests on both sides of expiry.
-- [ ] Finalize daily `accepted_day` partitions for event/delivery history, composite keys, local foreign keys, cross-service ownership checks, partition pre-creation, cutoff-day cleanup, and blocked-drop behavior. Keep configuration tables outside event-age purge.
+- [x] Define daily `accepted_day` partitions for event/delivery history, composite keys, local foreign keys, cross-service ownership checks, partition pre-creation, the 25-hour physical-deletion grace, and blocked-drop behavior. Keep configuration tables outside event-age purge.
 - [x] Specify production primary/standby failover and backup strategy per write shard; require synchronous standby WAL confirmation before ingestion `202`, and a retryable failure when no synchronous standby is available. Do not assign an untested shard count.
 - [ ] During Docker failure testing, prove an unavailable synchronous standby blocks ingestion `202`; a commit timeout retries with the same idempotency key; promotion fences the old primary; and an isolated backup/WAL restore recovers committed state.
-- [ ] Define a separate Docker image and test target for each service and worker role; Compose is the functional environment, while the final load environment must have documented distributed resources.
+- [x] Define a separate Docker image and test target for each service and worker role in `deploy/README.md`; Compose is the functional environment, while the final load environment has documented distributed resource categories.
 
 **Gate:** Review the revised architecture and migration plan before creating tables. Do not treat the shared LLD example schema or a single-host Compose run as proof of the HLD capacity target.
 
 ### 2.1 Expected Compose services
 
-- [ ] `postgres`: durable transactional store; health check waits for successful SQL connection.
-- [ ] `kafka` and its required local dependency/configuration: topics for accepted events, ready deliveries, and analytics facts.
+- [ ] `postgres`: PostgreSQL 17 with separate control, ingestion, and delivery databases; health check waits for successful SQL connection.
+- [ ] `kafka` and its required local dependency/configuration: topics for configuration changes, accepted events, ready deliveries, and analytics facts.
 - [ ] `redis`: quota/token-cache coordination; app behavior remains bounded if Redis is stopped.
 - [ ] `clickhouse`: analytics database and `relayforge_analytics.delivery_facts` table.
-- [ ] `api`: Spring Boot REST application.
-- [ ] `outbox-publisher`: claims outbox rows and publishes Kafka messages.
+- [ ] `control-plane` and `ingestion`: independently runnable REST applications.
+- [ ] `control-publisher`, `ingestion-publisher`, and `delivery-publisher`: publish their owner's outbox rows.
 - [ ] `router`: consumes accepted events and creates logical deliveries.
+- [ ] `delivery-api`: serves organization-scoped delivery queries and replay.
 - [ ] `delivery-worker`: claims due deliveries, calls webhook receivers, and records outcomes.
 - [ ] `retry-scheduler`: scans due retry work and recovers expired leases.
 - [ ] `analytics-consumer`: inserts analytics facts into ClickHouse before committing Kafka offsets.
+- [ ] `analytics-api`: serves bounded analytics queries.
 - [ ] `webhook-simulator`: controllable local endpoints for 2xx, 4xx, 429, 5xx, delay, timeout, and connection reset tests.
 
-The first implementation may run several worker roles from one image/profile. Keep roles independently runnable and independently scalable; do not require every role to be a separate codebase.
+Each role has a separate image and test target. Services in one ownership boundary may share source libraries, but their runtime images and replica counts are independent.
 
 ### 2.2 Standard commands
 
@@ -60,17 +62,17 @@ Adapt service names to the actual `compose.yaml`; keep equivalent commands in th
 
 # Inspect startup and migrations
  docker compose ps
- docker compose logs --tail=200 api
+ docker compose logs --tail=200 ingestion
 
 # Follow asynchronous processing
- docker compose logs -f outbox-publisher router delivery-worker retry-scheduler analytics-consumer
+ docker compose logs -f control-publisher ingestion-publisher delivery-publisher router delivery-worker retry-scheduler analytics-consumer
 
 # Stop only one dependency for failure tests
  docker compose stop redis
  docker compose start redis
 
-# Run tests in the app container (or the documented host wrapper)
- docker compose exec api ./mvnw test
+# Run a role's Docker functional tests
+ docker compose run --rm test-ingestion
 
 # Inspect PostgreSQL state
  docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"
@@ -85,7 +87,7 @@ Adapt service names to the actual `compose.yaml`; keep equivalent commands in th
 - [ ] Add a documented reset command for disposable local data. Clearly warn that it deletes local volumes.
 - [ ] Document ports, service names, test credentials/bootstrap procedure, and API examples in `README.md`.
 
-**Checkpoint D0 — Clean boot:** From a clean checkout, `docker compose up -d --build` succeeds; all required services become healthy; migrations run once; `/health/live` returns `200`; `/health/ready` returns `200` only when required dependencies are available. Restarting the stack does not lose committed PostgreSQL data.
+**Checkpoint D0 — Clean boot (after A2):** Once the application bootstrap and owner migrations exist, `docker compose up -d --build` succeeds from a clean checkout; all required services become healthy; migrations run once; `/health/live` returns `200`; `/health/ready` returns `200` only when required dependencies are available. Restarting the stack does not lose committed PostgreSQL data.
 
 ## 3. Milestone A — Project skeleton, database, and identity
 
@@ -101,10 +103,10 @@ Adapt service names to the actual `compose.yaml`; keep equivalent commands in th
 
 ### A2. PostgreSQL migrations and schema constraints
 
-- [ ] Add Flyway migrations for the tables owned by each service using the revised LLD physical schema; retain LLD v1.6 logical fields, constraints, and indexes where compatible with the selected partition keys.
+- [ ] Add Flyway migrations for each owner's tables using the PostgreSQL 17 templates in `docs/schema/` and the LLD's logical fields where compatible.
 - [ ] Add foreign keys, uniqueness constraints, status checks where appropriate, and indexes for route lookup, due work, expired leases, organization-scoped queries, and outbox claims.
 - [ ] Add migration tests against the same PostgreSQL major version used by Compose.
-- [ ] Add composite `(id, organization_id)` ownership keys and foreign keys within each service database where applicable; validate cross-service ownership at API/event boundaries and in integration tests.
+- [ ] Add composite organization/cohort ownership keys and foreign keys within each service database where applicable; validate cross-service ownership at API/event boundaries and in integration tests.
 - [ ] Test that daily partition keys are present in required unique/primary keys, future partitions are pre-created, and partition-boundary inserts and queries work.
 - [ ] Ensure every organization-owned query has an organization scope; do not trust a caller-supplied organization ID for authenticated tenant requests.
 
@@ -162,21 +164,21 @@ Adapt service names to the actual `compose.yaml`; keep equivalent commands in th
 
 - [ ] Implement `POST /v1/events` with `event_type`, JSON payload, optional `occurred_at`, schema version, and required `Idempotency-Key` header as defined in LLD.
 - [ ] Validate payload size/depth, event type, timestamps, JSON structure, and organization status/quota before writing.
-- [ ] In one transaction insert `events` and `outbox` message `event.accepted.v1` for the Kafka accepted-events topic. Commit before returning `202 Accepted`.
+- [ ] In one ingestion-shard transaction claim the registry key, insert `events`, and write the `ingestion_outbox` message `event.accepted.v1`; return `202` only after synchronous standby commit confirmation.
 - [ ] Route `(organization_id, idempotency_key)` consistently to one ingestion shard; commit its 90-day registry entry, event, and outbox atomically. Return the original event for an identical request and conflict for a changed request; test key reuse only after expiry.
 - [ ] Ensure a PostgreSQL error returns non-2xx and no acceptance claim. Do not publish directly to Kafka from the API transaction.
 
-**Touches:** `events`, `outbox`; `EventController`, `EventIngestionService`, idempotency/hash utility, quota service. API: `POST /v1/events`.  
+**Touches:** `bucket_fence`, `idempotency_registry`, `events`, `ingestion_outbox`; `EventController`, `EventIngestionService`, idempotency/hash utility, quota service. API: `POST /v1/events`.
 **Checkpoint C1:** Publish an event → response is `202` with `event_id`; verify event and pending outbox row exist. Repeat same key/body → same event ID and no second event. Same key/different body → conflict. Stop PostgreSQL → request fails and does not return `202`.
 
 ### C2. Event query and tenant boundary
 
-- [ ] Implement `GET /v1/events/{event_id}` with event status and delivery summary; return only data belonging to authenticated organization.
+- [ ] Implement `GET /v1/events/{event_id}` by resolving the versioned locator on ingestion and composing a bounded delivery-owned progress/summary read; return only data belonging to the authenticated organization.
 - [ ] Apply bounded payload response size and avoid leaking internal ciphertext or internal outbox payloads.
 - [ ] Add integration tests for guessed UUIDs across organizations and invalid IDs.
 
 **Touches:** `events`, `deliveries`; `EventQueryService`, `EventController`. API: `GET /v1/events/{event_id}`.  
-**Checkpoint C2:** Event owner can query their event; another organization cannot distinguish or read the event; summary reflects current delivery counts after routing.
+**Checkpoint C2:** Event owner can query acceptance; another organization cannot distinguish or read the event. Before routing is implemented, the delivery summary is pending; after D3 it reflects current counts.
 
 ## 6. Milestone D — Transactional outbox, Kafka, and routing
 
@@ -187,12 +189,12 @@ Adapt service names to the actual `compose.yaml`; keep equivalent commands in th
 - [ ] Mark published only after Kafka acknowledges. If the process crashes after Kafka publish but before DB marking, republish is expected; consumers must be idempotent.
 - [ ] Back off transient broker errors; retain diagnostics without secret data. Never delete unpublished rows as a recovery strategy.
 
-**Touches:** `outbox`; `OutboxPublisher`, Kafka producer configuration, topic setup.  
+**Touches:** `control_outbox`, `ingestion_outbox`, `delivery_outbox`; each owner's publisher, Kafka producer configuration, topic setup.
 **Checkpoint D1:** Publish event while publisher is stopped → outbox remains pending. Start publisher → Kafka receives message and row becomes published. Kill publisher after publish but before marking → duplicate Kafka message is tolerated and no data is lost.
 
 ### D2. Topic contracts and consumer resilience
 
-- [ ] Create/configure accepted-event, delivery-ready, and analytics-fact topics with documented partitions, retention, keys, and local replication settings.
+- [ ] Create/configure configuration-change, accepted-event, delivery-ready, and analytics-fact topics with the keys, 24-hour initial retention, local replication settings, and production durability policy in `docs/decisions/kafka-transport.md`; set production partition counts from measured throughput.
 - [ ] Implement versioned message envelope and schema validation. Reject/quarantine malformed messages without infinite retry loops.
 - [ ] Commit consumer offsets only after the database transaction or ClickHouse insert succeeds. Configure bounded retry and a quarantine/dead-letter path for poison messages.
 - [ ] Make consumer handlers idempotent using stable event/delivery/fact identifiers and database uniqueness constraints.
@@ -203,26 +205,27 @@ Adapt service names to the actual `compose.yaml`; keep equivalent commands in th
 
 ### D3. Event router and logical delivery creation
 
-- [ ] Consume `event.accepted.v1`; resolve active subscriptions by `(organization_id, event_type)`.
-- [ ] Snapshot matching endpoint/subscription IDs at routing time; do not silently add newly created subscriptions to already-routed events.
-- [ ] In one PostgreSQL transaction create one `deliveries` row per matching endpoint and a corresponding `delivery.ready.v1` outbox row. Use unique `(event_id, endpoint_id, generation)` and stable deduplication keys.
+- [ ] Apply secret-free configuration snapshots to delivery-owned endpoint/subscription projections and contiguous per-organization revision state before routing becomes ready.
+- [ ] Consume `event.accepted.v1`; verify the organization and event locator through ingestion, then resolve active endpoints/subscriptions by `(organization_id, event_type)` from the ready projection.
+- [ ] Persist matching endpoint/subscription targets once with `routing_progress`; later chunks use those targets so a duplicate message or config change cannot alter fan-out.
+- [ ] In bounded local transactions create one `deliveries` and `delivery_work` row per target plus a `delivery.ready.v1` outbox row. Use cohort-aware uniqueness and stable deduplication keys; finish progress only after every target is materialized.
 - [ ] Define zero-match behavior: event remains accepted/processed with zero deliveries and observable routing outcome.
-- [ ] Commit Kafka offset only after routing transaction commits.
+- [ ] Commit Kafka offset after durable routing progress; recovery resumes unfinished chunks without recalculating targets.
 
-**Touches:** `subscriptions`, `endpoints`, `events`, `deliveries`, `outbox`; `EventRoutingConsumer`, `RoutingService`.  
+**Touches:** `endpoint_projection`, `subscription_projection`, `projection_state`, `routing_targets`, `routing_progress`, `deliveries`, `delivery_work`, `delivery_outbox`; `EventRoutingConsumer`, `RoutingService`.
 **Checkpoint D3:** Event with two matching endpoints creates exactly two deliveries and two delivery-ready outbox rows. Event with no matching subscription creates none. Duplicate accepted-event message creates no additional generation-1 deliveries.
 
 ## 7. Milestone E — Webhook delivery and history
 
 ### E1. Lease-safe delivery claiming
 
-- [ ] Claim due `PENDING`/`RETRY_SCHEDULED` deliveries atomically with lease owner, random lease token, expiry, and version increment.
+- [ ] Claim due `delivery_work` atomically with lease owner, random lease token, expiry, and version increment; update the matching day-partitioned delivery row in the same transaction.
 - [ ] Increment `claim_count` on ownership claim; reserve `attempt_count` and insert an HTTP attempt only immediately before each destination request. Authentication failures create only authentication attempts.
 - [ ] Reject stale workers when lease token/version no longer matches. Renew a 60-second lease by compare-and-set during the 240-second processing deadline; stop sending if renewal fails.
 - [ ] Recover expired `IN_PROGRESS` leases and return them to eligible work without creating duplicate logical deliveries.
 - [ ] Enforce endpoint-level concurrency and platform-wide bounded worker concurrency.
 
-**Touches:** `deliveries`; `DeliveryClaimRepository`, `DeliveryWorker`, `LeaseRecoveryService`.  
+**Touches:** `delivery_work`, `deliveries`; `DeliveryClaimRepository`, `DeliveryWorker`, `LeaseRecoveryService`.
 **Checkpoint E1:** Two workers compete for one due row; only one claims it. Kill owner while in progress; after lease expiry, recovery requeues it. A stale worker cannot overwrite the new owner's state. A 90-second token exchange followed by a slow webhook does not lose a renewed lease.
 
 ### E2. Request construction, signatures, and outbound HTTP
@@ -232,7 +235,7 @@ Adapt service names to the actual `compose.yaml`; keep equivalent commands in th
 - [ ] Apply DNS/IP SSRF checks immediately before connect, disable redirects, enforce connect/read/overall timeouts, response-size limits, and allowed headers.
 - [ ] Treat any 2xx as success. Capture only bounded/sanitized response excerpts; never persist credentials or unbounded bodies.
 
-**Touches:** `endpoints`, `events`, `deliveries`, `delivery_attempts`; `OutboundRequestFactory`, `WebhookHttpClient`, signature/auth strategy.  
+**Touches:** bounded control-plane endpoint read, ingestion payload read, `delivery_work`, `deliveries`, `delivery_attempts`; `OutboundRequestFactory`, `WebhookHttpClient`, signature/auth strategy.
 **Checkpoint E2:** Simulator receives a valid signed request; signature verification passes; `delivery_id` is stable across attempts. A 2xx succeeds; redirect is not followed; slow receiver times out within configured bounds.
 
 ### E3. Attempt history and query APIs
@@ -242,7 +245,7 @@ Adapt service names to the actual `compose.yaml`; keep equivalent commands in th
 - [ ] Implement `GET /v1/deliveries`, `GET /v1/deliveries/{delivery_id}`, and stable cursor pagination with organization scope and filters.
 - [ ] Include attempt history in delivery detail; do not query ClickHouse for authoritative state.
 
-**Touches:** `deliveries`, `delivery_attempts`, `outbox`, `audit_records` as applicable; `DeliveryQueryService`, `DeliveryController`.  
+**Touches:** `delivery_work`, `deliveries`, `delivery_attempts`, `delivery_outbox`, delivery audit as applicable; `DeliveryQueryService`, `DeliveryController`.
 **Checkpoint E3:** A successful simulated delivery appears as `SUCCEEDED` with one completed attempt and HTTP status. Search filters/pagination are stable; cross-organization reads are blocked.
 
 ## 8. Milestone F — Retries, dead-lettering, and replay
@@ -251,10 +254,10 @@ Adapt service names to the actual `compose.yaml`; keep equivalent commands in th
 
 - [ ] Implement explicit classification: 2xx success; 408/429, transient network failures, and 5xx retryable; other 4xx terminal by default; configuration/security failures fail fast.
 - [ ] Implement bounded exponential backoff with full jitter, maximum attempts, maximum retry horizon, and valid `Retry-After` handling bounded by policy.
-- [ ] Persist `next_attempt_at` and `RETRY_SCHEDULED`; do not sleep a worker thread while waiting for the retry delay.
+- [ ] Persist `next_attempt_at` and `RETRY_SCHEDULED` in both `delivery_work` and `deliveries` in one transaction; do not sleep a worker thread while waiting for the retry delay.
 - [ ] Ensure state change and analytics-fact outbox insert are atomic.
 
-**Touches:** `deliveries`, `delivery_attempts`, `outbox`; `RetryPolicy`, `DeliveryOutcomeService`.  
+**Touches:** `delivery_work`, `deliveries`, `delivery_attempts`, `delivery_outbox`; `RetryPolicy`, `DeliveryOutcomeService`.
 **Checkpoint F1:** Simulator 500 → delivery becomes retry-scheduled with future `next_attempt_at`; 429 with `Retry-After` respects the bound; 400 becomes terminal; 200 becomes succeeded. Test retry exhaustion results in `DEAD_LETTERED`.
 
 ### F2. Due-work scanner and crash recovery
@@ -264,17 +267,17 @@ Adapt service names to the actual `compose.yaml`; keep equivalent commands in th
 - [ ] Make at-least-once duplicate delivery explicit: the receiver can observe a duplicate if RelayForge cannot know whether the first request was processed.
 - [ ] Add metrics for due backlog, oldest due age, expired leases, retry exhaustion, and outbox age.
 
-**Touches:** `deliveries`, `outbox`; `RetryScheduler`, lease recovery, publisher.  
+**Touches:** `delivery_work`, `deliveries`, `delivery_outbox`; `RetryScheduler`, lease recovery, publisher.
 **Checkpoint F2:** Stop worker and scheduler, create retry-due work, restart services, and verify work resumes. Simulate post-receiver/pre-commit crash and verify the same logical delivery is retried with the same `delivery_id`, while attempt history remains correct.
 
 ### F3. Replay and audit
 
 - [ ] Implement `POST /v1/deliveries/{delivery_id}/replay`; verify ownership and replay eligibility.
 - [ ] Create a new delivery row with new `delivery_id`, incremented generation, and linkage to the original; preserve original delivery and attempt history.
-- [ ] Insert `replay_requests`, `audit_records`, and delivery-ready outbox in one transaction. Prevent duplicate replay submissions using request idempotency if specified by API contract.
+- [ ] Insert `replay_requests`, `delivery_audit_records`, `delivery_work`, and delivery-ready outbox in one transaction. Require the replay idempotency key; return the original replay for a matching request and conflict for a changed request.
 - [ ] Return `202` only after replay transaction commits.
 
-**Touches:** `deliveries`, `replay_requests`, `audit_records`, `outbox`. API: `POST /v1/deliveries/{delivery_id}/replay`.  
+**Touches:** `deliveries`, `delivery_work`, `replay_requests`, `delivery_audit_records`, `delivery_outbox`. API: `POST /v1/deliveries/{delivery_id}/replay`.
 **Checkpoint F3:** Replay a dead-lettered delivery → original remains unchanged, new generation is queued with a different ID, audit/replay rows exist, and new webhook request uses the new ID. Unauthorized replay is rejected.
 
 ## 9. Milestone G — Dynamic token authentication
@@ -312,7 +315,7 @@ Adapt service names to the actual `compose.yaml`; keep equivalent commands in th
 
 ### H2. ClickHouse DDL and ingestion
 
-- [ ] Apply `CREATE DATABASE IF NOT EXISTS relayforge_analytics` and `delivery_facts` DDL from LLD v1.6 using `ReplacingMergeTree(version)`, `PARTITION BY toYYYYMM(event_date)`, and `ORDER BY (organization_id, event_date, fact_id)`.
+- [ ] Apply `CREATE DATABASE IF NOT EXISTS relayforge_analytics` and `delivery_facts` DDL from the LLD using `ReplacingMergeTree(version)`, `PARTITION BY toYYYYMM(event_date)`, and `ORDER BY (organization_id, event_date, fact_id)`.
 - [ ] Implement analytics consumer validation, insert, and Kafka offset commit only after ClickHouse acknowledges insert.
 - [ ] Make duplicate inserts safe with stable `fact_id`/`version`; use `FINAL` for correctness-sensitive queries. Test null corrections, duplicate facts, and equal-version content invariants; benchmark query cost.
 - [ ] Add bounded retries and observability for ClickHouse unavailability. Analytics lag must not block event acceptance or webhook delivery.
@@ -469,7 +472,7 @@ Notes:
 - [ ] API contract tests, migration tests, unit tests, integration tests, security tests, and failure-injection tests pass in CI.
 - [ ] Clean Docker boot and restart are reproducible from README.
 - [ ] Organization isolation, idempotency, transactional outbox, duplicate-safe consumers, lease recovery, retries, replay, and analytics deduplication are demonstrated by tests.
-- [ ] ClickHouse DDL matches LLD v1.6. Analytics responses communicate freshness; PostgreSQL remains authoritative for individual event/delivery state.
+- [ ] ClickHouse DDL matches the LLD. Analytics responses communicate freshness; PostgreSQL remains authoritative for individual event/delivery state.
 - [ ] A restart-safe 90-day PostgreSQL event-history lifecycle is tested against partition keys, references, replay, tenant scope, and live work. Configuration remains; unpublished outbox rows are never purged by age.
 - [ ] Secrets/SSRF/quota controls are tested. No plaintext API keys or credentials are persisted or logged.
 - [ ] Benchmark report includes measured evidence and no unsupported throughput claims.

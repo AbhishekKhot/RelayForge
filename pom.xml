@@ -11,9 +11,11 @@
     </properties>
     <modules>
         <module>relayforge-control-plane</module>
+        <module>relayforge-control-publisher</module>
         <module>relayforge-ingestion</module>
         <module>relayforge-ingestion-publisher</module>
         <module>relayforge-router</module>
+        <module>relayforge-delivery-api</module>
         <module>relayforge-delivery-worker</module>
         <module>relayforge-delivery-publisher</module>
         <module>relayforge-retry-scheduler</module>
