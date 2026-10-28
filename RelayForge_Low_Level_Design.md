@@ -845,6 +845,64 @@ Physical migrations MUST implement these contracts before Milestone A:
    payload copies with separately documented lifecycles. ClickHouse
    retention is unchanged by this PostgreSQL decision.
 
+#### PostgreSQL durability, failover, and backups
+
+Every production control-plane database and ingestion/delivery write shard
+has one writable primary and at least one physical standby in a separate
+failure domain. Ingestion uses a named synchronous standby with
+`synchronous_standby_names` set on the primary and `synchronous_commit = on`
+for every event/idempotency/outbox transaction. PostgreSQL then waits for
+the standby's WAL flush before reporting a successful commit. Do not use
+`remote_write`, `local`, or `off` for this transaction; these do not meet
+the acknowledged-event durability contract. Keep `fsync` enabled. Verify
+the effective settings at startup and after failover, not only in a
+configuration template. [PostgreSQL synchronous replication](https://www.postgresql.org/docs/current/warm-standby.html).
+
+If the named synchronous standby is absent, stop accepting new events
+before opening a transaction where possible. A standby can disappear
+during commit, so bound the request deadline and return a retryable
+service error if confirmation is unavailable. A timed-out or disconnected
+commit has an **unknown outcome**, not a proven rollback: the producer
+must retry with the same idempotency key, and the new primary must resolve
+that key against its registry before creating another event. Never return
+`202` from a pre-commit health check alone. A production failover target
+must contain every acknowledged commit; otherwise failover is blocked
+pending recovery. Simultaneous loss of primary and synchronous standby
+remains a separate disaster-recovery scenario.
+
+Use a failover controller that fences the old primary before promoting a
+standby and switching the write endpoint. PostgreSQL provides promotion
+but does not provide the complete failure-detection and client-routing
+system. Reject writes while leadership is uncertain; drain or replace
+stale application connections after the switch. Promote only a standby
+whose durable WAL position covers the last acknowledged ingestion commit.
+Rebuild the former primary as a standby before returning it to service.
+With only one standby, ingestion stays unavailable after its promotion
+until a new synchronous standby is ready. Do not assume an asynchronous
+standby has all acknowledged transactions.
+[PostgreSQL failover](https://www.postgresql.org/docs/current/warm-standby-failover.html).
+
+Take regular physical base backups for **each** database/shard and
+continuously archive WAL to storage outside that shard's failure domain.
+Keep a complete base backup plus the WAL sequence needed for each promised
+restore point, and retain timeline history across promotions. Backup
+retention is a separately approved recovery policy, not the 90-day event
+row lifecycle. Back up configuration and key-management material through
+their own protected procedures; a database restore without usable keys
+cannot recover encrypted endpoint settings. Exercise point-in-time restore
+to an isolated cluster and verify event, registry, outbox, delivery, and
+configuration consistency before calling a backup usable.
+[PostgreSQL continuous archiving and PITR](https://www.postgresql.org/docs/current/continuous-archiving.html).
+
+Monitor primary role, `pg_stat_replication` sync state and flush position,
+WAL/archive failures, slot-retained WAL, backup age, restore success,
+commit latency, and application acceptance errors per shard. Cap WAL
+retention from replication slots and alert before disk exhaustion.
+Record recovery time and any lost **unacknowledged** work in failover
+drills; do not assign an untested RTO or fixed shard count. The local
+single-instance Compose profile tests behavior, not production failover.
+[PostgreSQL replication statistics](https://www.postgresql.org/docs/current/monitoring-stats.html).
+
 ------------------------------------------------------------------------
 
 ## 6. HTTP API contracts
