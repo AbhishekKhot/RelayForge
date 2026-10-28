@@ -27,7 +27,7 @@ jobs:
       - name: Smoke test control-plane image
         run: |
           docker run -d --rm --name relayforge-bootstrap -p 18080:8080 relayforge-control-plane:ci
-          trap 'docker stop relayforge-bootstrap' EXIT
-          curl --fail --silent --show-error --retry 20 --retry-delay 1 --retry-connrefused -H 'X-Request-Id: ci-smoke' -D headers.txt -o response.json http://localhost:18080/health/ready
+          trap 'docker logs relayforge-bootstrap || true; docker stop relayforge-bootstrap' EXIT
+          curl --fail --silent --show-error --retry 30 --retry-delay 1 --retry-all-errors -H 'X-Request-Id: ci-smoke' -D headers.txt -o response.json http://localhost:18080/health/ready
           grep -qi '^X-Request-Id: ci-smoke' headers.txt
           grep -q '"status":"UP"' response.json
