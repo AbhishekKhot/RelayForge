@@ -1,8 +1,7 @@
 # RelayForge — High-Level Design
 
-**Document version:** 3.3
 **Status:** Baseline for implementation  
-**Aligned documents:** RelayForge Low-Level Design v1.6; RelayForge Implementation Checklist
+**Aligned documents:** RelayForge Low-Level Design; RelayForge Implementation Checklist
 **Primary stack:** Java 21, Spring Boot, PostgreSQL, Kafka, Redis, ClickHouse
 
 ---
@@ -28,7 +27,7 @@ This document describes the system boundary, logical components, data flow, depl
 - Protect the platform with authentication, authorization, quotas, SSRF defenses, and resource limits.
 - Scale ingestion, publication, delivery, and analytics independently where needed.
 
-### Non-goals for the first version
+### Non-goals for the initial release
 
 - Active-active multi-region operation.
 - Exactly-once external business effects.
@@ -394,7 +393,7 @@ Benchmark reports must record payload size, fan-out, receiver latency, failure m
 - **Webhook execution:** at-least-once HTTP attempts; duplicate requests can occur. RelayForge cannot guarantee exactly-once external side effects.
 - **Delivery status:** PostgreSQL is authoritative for individual delivery details.
 - **Analytics:** ClickHouse is eventually consistent; expose freshness metadata.
-- **Ordering:** no global ordering guarantee in the first version. Kafka partitioning alone does not guarantee end-to-end endpoint ordering if retries and parallel workers reorder attempts.
+- **Ordering:** no global ordering guarantee in the initial release. Kafka partitioning alone does not guarantee end-to-end endpoint ordering if retries and parallel workers reorder attempts.
 
 ## 15. API and routing contract (HLD-level)
 
@@ -428,7 +427,7 @@ Benchmark reports must record payload size, fan-out, receiver latency, failure m
 - Routing/delivery status changes produce analytics facts through outbox records committed atomically with the relevant PostgreSQL state change. The outbox publisher sends them to the dedicated `analytics.delivery-facts` Kafka topic.
 - `relayforge-analytics-consumer` consumes facts idempotently and writes ClickHouse. Analytics lag must not block event acceptance or webhook delivery.
 
-## 16. Final v1 decisions
+## 16. Implementation decisions
 
 The following are implementation constraints, not open design questions:
 
@@ -439,7 +438,7 @@ The following are implementation constraints, not open design questions:
 - The delivery worker checks the endpoint's current status and versioned configuration before sending. A disabled endpoint is not sent to.
 - Delivery work is durable through PostgreSQL delivery rows plus outbox messages. Kafka is transport, not authoritative state.
 - Delivery is at-least-once. `delivery_id` is stable across attempts within one generation. Replay creates a new delivery ID and increments generation.
-- No ordering guarantee is provided in v1.
+- No ordering guarantee is provided in the initial release.
 - Any 2xx is successful by default. HTTP 408/429, transient network failures, and 5xx are retryable; other 4xx are terminal by default. Respect valid `Retry-After` within configured limits.
 - Token acquisition allows an initial attempt plus up to five retries for transient failures within a 90-second deadline; permanent configuration failures fail fast.
 - Token-cache keys include organization, endpoint, auth-configuration version, and credential version. Use TTL jitter, local single-flight, per-key distributed coordination, cache re-check after lock acquisition, and early refresh.
@@ -473,4 +472,4 @@ The HLD does not claim implementation or performance benchmarks are complete. Th
 
 ---
 
-**Status:** Planning baseline for RelayForge v1. LLD v1.6 retains functional contracts; its physical schema gate must pass before the high-volume implementation. Capacity and topology remain subject to benchmark evidence.
+**Status:** Planning baseline for RelayForge. The LLD retains functional contracts; its physical schema gate must pass before the high-volume implementation. Capacity and topology remain subject to benchmark evidence.
