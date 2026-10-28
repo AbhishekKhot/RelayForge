@@ -50,7 +50,9 @@ mvn validate
 mvn test
 ```
 
-`mvn validate` checks the reactor layout and Java Checkstyle rules; `.editorconfig` defines four-space indentation. `mvn test` runs the bootstrap behavior tests. Each deployable module now has a Spring Boot entry point. To run the control-plane bootstrap locally, use `mvn package` followed by `java -jar relayforge-control-plane/target/relayforge-control-plane-0.1.0-SNAPSHOT.jar`, then inspect `http://localhost:8080/health/live`. Database and broker clients are added in later checkpoints, so readiness currently reflects process startup only.
+`mvn validate` checks the reactor layout and Java Checkstyle rules; `.editorconfig` defines four-space indentation. `mvn test` runs the bootstrap and PostgreSQL 17.11 Testcontainers migration tests, so Docker must be running. Each deployable module has a Spring Boot entry point. To run the control-plane bootstrap locally, use `mvn package` followed by `java -jar relayforge-control-plane/target/relayforge-control-plane-0.1.0-SNAPSHOT.jar`, then inspect `http://localhost:8080/health/live`. Database clients for application queries and dependency-backed readiness belong to later checkpoints; readiness currently reflects process startup only.
+
+The control-plane, ingestion, and delivery-api images apply their own Flyway migration at startup when `SPRING_FLYWAY_URL`, `SPRING_FLYWAY_USER`, and `SPRING_FLYWAY_PASSWORD` are set. Point each role at a separate PostgreSQL 17 database; ingestion and delivery use one database per shard. Bootstrap creates yesterday, today, and seven future UTC-day partitions. The migration tests verify a second apply leaves the schema history unchanged, and exercise local uniqueness, ownership, and partition boundaries. See [schema ownership and retention](docs/schema/README.md) for the remaining operational jobs.
 
 Build a role image with `docker build -f deploy/Dockerfile.service --build-arg MODULE=relayforge-control-plane -t relayforge/control-plane:dev .`. Replace the module and image name for another role. `compose.yaml` and dependency-backed readiness belong to the D0 checkpoint after A2; `docker compose up` is not supported yet. The [checklist](RelayForge_Implementation_Checklist.md) tracks that gate.
 
@@ -61,6 +63,8 @@ RelayForge/
 ├── pom.xml                         Maven reactor
 ├── relayforge-runtime/              Validated runtime settings
 ├── relayforge-api-support/          Shared HTTP errors, request IDs, health
+├── relayforge-db-migration/         Conditional owner Flyway startup
+├── relayforge-schema-tests/         PostgreSQL 17 migration checks
 ├── relayforge-contracts/            Cross-service message contracts
 ├── relayforge-control-plane/        Accounts, keys, endpoints, subscriptions
 ├── relayforge-control-publisher/    Configuration outbox publisher

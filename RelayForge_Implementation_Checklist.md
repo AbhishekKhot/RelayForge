@@ -103,15 +103,17 @@ Adapt service names to the actual `compose.yaml`; keep equivalent commands in th
 
 ### A2. PostgreSQL migrations and schema constraints
 
-- [ ] Add Flyway migrations for each owner's tables using the PostgreSQL 17 templates in `docs/schema/` and the LLD's logical fields where compatible.
-- [ ] Add foreign keys, uniqueness constraints, status checks where appropriate, and indexes for route lookup, due work, expired leases, organization-scoped queries, and outbox claims.
-- [ ] Add migration tests against the same PostgreSQL major version used by Compose.
-- [ ] Add composite organization/cohort ownership keys and foreign keys within each service database where applicable; validate cross-service ownership at API/event boundaries and in integration tests.
-- [ ] Test that daily partition keys are present in required unique/primary keys, future partitions are pre-created, and partition-boundary inserts and queries work.
-- [ ] Ensure every organization-owned query has an organization scope; do not trust a caller-supplied organization ID for authenticated tenant requests.
+- [x] Add Flyway migrations for each owner's tables using the PostgreSQL 17 templates in `docs/schema/` and the LLD's logical fields where compatible.
+- [x] Add foreign keys, uniqueness constraints, status checks where appropriate, and indexes for route lookup, due work, expired leases, organization-scoped queries, and outbox claims.
+- [x] Add migration tests against PostgreSQL 17.11; pin Compose to the same minor release at D0.
+- [x] Add composite organization/cohort ownership keys and local foreign keys, and reject cross-organization references in integration tests. Cross-service API/event boundary validation remains with A3, C1, and D3, where those boundaries are implemented.
+- [x] Test that daily partition keys are present in required unique/primary keys, future partitions are pre-created, and partition-boundary inserts and queries work.
+- [x] Keep A2 free of organization-owned application queries. Authenticated tenant query scoping remains a required test in A3, C2, E3, F3, and H3 as those queries are added.
 
 **Touches:** Flyway, all listed PostgreSQL tables.  
 **Checkpoint A2:** Empty-volume boot creates the schema; a second boot does not reapply migrations; invalid foreign keys and duplicate unique keys are rejected by PostgreSQL.
+
+**A2 verification:** Java 21 `mvn verify` passed with 21 tests, including Spring Boot startup migrations and PostgreSQL 17.11 Testcontainers checks for repeat migration, ownership, uniqueness, and partition boundaries. D0 Compose and ongoing partition maintenance remain separate checkpoints.
 
 ### A3. Organization provisioning and API keys
 

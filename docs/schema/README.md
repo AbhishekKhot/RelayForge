@@ -1,6 +1,6 @@
 # PostgreSQL physical schema plan
 
-The SQL files in this directory are the reviewed physical schema templates for PostgreSQL **17**. Apply `control-plane.sql` to the control-plane database, `ingestion.sql` to every ingestion shard, and `delivery.sql` to every delivery shard. They are inputs to the first service-owned Flyway migrations, not migrations already installed by the current Maven scaffold. Each database has its own Flyway history, credentials, backups, and write endpoint. Local Compose can host the three databases on one PostgreSQL instance; production shard count remains a measured capacity choice. PostgreSQL 17 has an active support window and supports the partitioned constraints used here ([version policy](https://www.postgresql.org/support/versioning/), [partition rules](https://www.postgresql.org/docs/17/ddl-partitioning.html)).
+The SQL files in this directory are the reviewed physical schema templates for PostgreSQL **17**. Their executable V1 Flyway copies live in `relayforge-control-plane`, `relayforge-ingestion`, and `relayforge-delivery-api` under `src/main/resources/db/migration/`. Each owner applies its migration to its own database; ingestion and delivery run it on every shard. Each database has its own Flyway history, credentials, backups, and write endpoint. Local Compose can host the three databases on one PostgreSQL instance; production shard count remains a measured capacity choice. PostgreSQL 17 has an active support window and supports the partitioned constraints used here ([version policy](https://www.postgresql.org/support/versioning/), [partition rules](https://www.postgresql.org/docs/17/ddl-partitioning.html)).
 
 ## Keys and ownership
 
@@ -23,9 +23,9 @@ Expire registry rows in small indexed batches by `expires_at`; do not use event 
 
 ## Migration and verification order
 
-1. Pin the same PostgreSQL 17 minor image for Compose and migration tests; use the latest supported 17 minor in deployment and upgrade it deliberately. Provision one database and restricted application role per owner. Seed the 4,096-bucket map and shard-local fences only after logical shard IDs are assigned.
+1. Pin the same PostgreSQL 17 minor image for Compose and migration tests; the current test image is `postgres:17.11`. Upgrade it deliberately. Provision one database and restricted application role per owner. Seed the 4,096-bucket map and shard-local fences only after logical shard IDs are assigned.
 2. Apply each owner's schema through its own forward-only Flyway history. Create/verify upcoming partitions on each shard, then enable owner readiness. Bootstrap endpoint and subscription projections from control plane, then catch up the organization-revision change stream before routing becomes ready.
 3. Test duplicate keys across UTC-day boundaries and expiry, wrong-organization local FK rejection, absent partition failure, replay against an old cohort, blocked retention, and clean restart. Test that all event reads and writes use the locator's shard and day.
 4. Run the full Docker functional suite before normal, peak, and headroom load tests. Report row size, per-shard writes, WAL, storage, vacuum, retention duration, and tenant skew; size physical shards only from those measurements.
 
-The SQL templates are executable schema examples; partition pre-creation, retention detach, failover, and backups remain operational jobs to implement and test. ClickHouse retention is unchanged by this PostgreSQL plan.
+The SQL templates match their V1 migrations. Bootstrap pre-creates yesterday, today, and seven future daily partitions. Ongoing partition pre-creation, retention detach, failover, and backups remain operational jobs to implement and test. ClickHouse retention is unchanged by this PostgreSQL plan.

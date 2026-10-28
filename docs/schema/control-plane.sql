@@ -18,7 +18,8 @@ CREATE TABLE api_keys (
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     last_used_at timestamptz,
     expires_at timestamptz,
-    revoked_at timestamptz
+    revoked_at timestamptz,
+    UNIQUE (id, organization_id)
 );
 CREATE INDEX api_keys_org_idx ON api_keys (organization_id);
 
@@ -91,13 +92,14 @@ CREATE TABLE shard_bucket_map (
 CREATE TABLE audit_records (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id uuid REFERENCES organizations(id),
-    actor_key_id uuid REFERENCES api_keys(id),
+    actor_key_id uuid,
     action varchar(100) NOT NULL,
     resource_type varchar(60) NOT NULL,
     resource_id uuid,
     request_id varchar(100),
     details jsonb NOT NULL DEFAULT '{}'::jsonb,
-    created_at timestamptz NOT NULL DEFAULT clock_timestamp()
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    FOREIGN KEY (actor_key_id, organization_id) REFERENCES api_keys(id, organization_id)
 );
 CREATE INDEX audit_records_org_created_idx ON audit_records (organization_id, created_at DESC);
 
@@ -120,6 +122,7 @@ CREATE TABLE control_outbox (
     published_at timestamptz,
     publish_attempts integer NOT NULL DEFAULT 0,
     last_error_code varchar(80),
-    UNIQUE (organization_id, source_revision)
+    UNIQUE (organization_id, source_revision),
+    FOREIGN KEY (organization_id) REFERENCES organizations(id)
 );
 CREATE INDEX control_outbox_pending_idx ON control_outbox (available_at, created_at) WHERE status IN ('PENDING', 'IN_FLIGHT');
