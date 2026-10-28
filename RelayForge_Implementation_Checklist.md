@@ -27,7 +27,8 @@
 - [ ] Replace the LLD's logical SQL examples with deployable, service-owned physical DDL and migration order; verify all cross-service references and local constraints against the target PostgreSQL version.
 - [ ] Specify stable `(organization_id, idempotency_key)` ingestion shard routing, a 90-day shard-local idempotency registry, versioned event/delivery locators, hot-tenant handling, and restart/recovery semantics.
 - [ ] Finalize daily `accepted_day` partitions for event/delivery history, composite keys, local foreign keys, cross-service ownership checks, partition pre-creation, cutoff-day cleanup, and blocked-drop behavior. Keep configuration tables outside event-age purge.
-- [ ] Specify production primary/standby failover and backup strategy per write shard; require synchronous standby WAL confirmation before ingestion `202`, and a retryable failure when no synchronous standby is available. Do not assign an untested shard count.
+- [x] Specify production primary/standby failover and backup strategy per write shard; require synchronous standby WAL confirmation before ingestion `202`, and a retryable failure when no synchronous standby is available. Do not assign an untested shard count.
+- [ ] During Docker failure testing, prove an unavailable synchronous standby blocks ingestion `202`; a commit timeout retries with the same idempotency key; promotion fences the old primary; and an isolated backup/WAL restore recovers committed state.
 - [ ] Define a separate Docker image and test target for each service and worker role; Compose is the functional environment, while the final load environment must have documented distributed resources.
 
 **Gate:** Review the revised architecture and migration plan before creating tables. Do not treat the shared LLD example schema or a single-host Compose run as proof of the HLD capacity target.
