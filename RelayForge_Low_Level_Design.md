@@ -749,8 +749,8 @@ permit cross-database joins, foreign keys, or transactions.
 
 | Owner | Stored tables | Atomic writes and consumers |
 |---|---|---|
-| Control plane | `organizations`, `api_keys`, `users`, `endpoints`, `subscriptions`, account/configuration `audit_records`, `control_outbox` | Provisioning, endpoint and subscription changes, and their configuration-change outbox records commit locally. |
-| Ingestion | `idempotency_registry`, `events`, `ingestion_outbox` | Registry claim, event payload, and `event.accepted` outbox record commit on the selected ingestion shard before `202`. |
+| Control plane | `organizations`, `api_keys`, `users`, `endpoints`, `subscriptions`, `shard_bucket_map`, account/configuration `audit_records`, `control_outbox` | Provisioning, endpoint and subscription changes, and their configuration-change outbox records commit locally. Bucket-map changes use a fenced operational workflow. |
+| Ingestion | `bucket_fence`, `idempotency_registry`, `events`, `ingestion_outbox` | Registry claim, event payload, and `event.accepted` outbox record commit on the selected ingestion shard before `202`. |
 | Delivery | `routing_progress`, `routing_targets`, `deliveries`, `delivery_attempts`, `authentication_attempts`, `replay_requests`, delivery replay audit, `delivery_outbox`, `subscription_projection` | Router, worker, scheduler, replay, and delivery publisher commit state and messages on the selected delivery shard. |
 | Analytics | ClickHouse delivery facts and query models | Kafka facts are deduplicated by their stable fact identity; no PostgreSQL transaction spans analytics. |
 
@@ -804,7 +804,7 @@ database transaction across an internal read or Kafka publish.
 
 | Table | Lifecycle and intended owner |
 |---|---|
-| `organizations`, `api_keys`, `users`, `endpoints`, `subscriptions` | Control-plane configuration; no event-age purge |
+| `organizations`, `api_keys`, `users`, `endpoints`, `subscriptions`, `shard_bucket_map` | Control-plane configuration and routing metadata; no event-age purge |
 | `events` | Ingestion history; 90 days from `accepted_at` |
 | `deliveries`, `delivery_attempts`, `authentication_attempts`, `replay_requests` | Delivery history; expire with the source event's acceptance cohort |
 | `outbox` | Owner-local work; delete published rows after recovery checks, never pending rows by age |
@@ -844,6 +844,91 @@ Physical migrations MUST implement these contracts before Milestone A:
    silently discard work. Align Kafka, backups, logs, and optional
    payload copies with separately documented lifecycles. ClickHouse
    retention is unchanged by this PostgreSQL decision.
+
+#### Ingestion shard routing and idempotency
+
+Use 4,096 logical buckets to separate stable key placement from the
+measured number of physical shards. For routing format 1, validate an
+idempotency key of at most 255 UTF-8 bytes, reject control characters and
+leading/trailing whitespace, and preserve its exact remaining bytes and
+case. Compute `SHA-256(organization UUID bytes || two-byte big-endian key
+length || key UTF-8 bytes)`; the first 12 digest bits are `bucket_id`
+(`0..4095`). The UUID uses its network-order 16 bytes. The algorithm and
+bucket count are protocol constants; a change requires a new routing
+format and a migration, not a deployment setting. Example: organization
+`00000000-0000-0000-0000-000000000001` with key `order-123` yields
+bucket `3410`, and `order-124` yields `2152`. This spreads one hot
+organization's **distinct** keys while keeping a retried key on one
+bucket. It provides no event ordering guarantee.
+
+A versioned `shard_bucket_map` in control-plane PostgreSQL assigns each
+bucket a logical ingestion shard and delivery shard. Its epoch changes
+commit with a local outbox record and are distributed to ingress and
+workers; the map is not queried from control-plane PostgreSQL for every
+event. Each shard ID
+resolves to its current primary via service discovery, independently of
+the map version. The selected bucket, map epoch, and both logical shard
+IDs become immutable fields of the event locator. The external `evt_...`
+ID encodes a versioned opaque locator containing those fields, UTC
+`accepted_day`, and the event UUID; the internal message carries the same
+fields explicitly. The delivery ID similarly carries its delivery shard,
+acceptance day, and delivery UUID. Decoding an ID supplies a route, never
+authorization: every read checks the authenticated organization against
+the stored row. Old locators keep pointing to old data after a bucket
+moves; logical shard IDs cannot be reused for a different data set.
+
+On the selected ingestion shard, a non-time-partitioned
+`idempotency_registry` has a unique `(organization_id, idempotency_key)`
+key, an accepted timestamp, `expires_at = accepted_at + 90 days`, a
+versioned canonical-request hash, and the original event locator. The
+registry, event payload, and `ingestion_outbox` row commit in one local
+transaction. Capture the database `clock_timestamp()` once after any
+registry lock wait and use it for expiry comparison and `accepted_at`;
+`now()` is fixed at transaction start and can be stale after a wait.
+An unexpired matching key returns its original event;
+an unexpired key with a different canonical request returns `409`.
+At or after `expires_at`, replace the registry claim atomically and
+create a new event. Use a row-level uniqueness conflict/lock so
+concurrent requests cannot each create an event. Expired-row cleanup is
+bounded, indexed by `expires_at`, and measured separately from event
+partition removal. Registry expiry does not make an old active delivery
+safe to purge. A unique constraint on daily event partitions cannot
+enforce this cross-day window because PostgreSQL requires partition keys
+in partitioned-table unique constraints.
+[PostgreSQL partitioned uniqueness](https://www.postgresql.org/docs/current/ddl-partitioning.html),
+[atomic conflict handling](https://www.postgresql.org/docs/current/sql-insert.html),
+[transaction time functions](https://www.postgresql.org/docs/current/functions-datetime.html).
+
+Each acceptance transaction locks its `bucket_fence` row `FOR SHARE` and
+checks the expected map epoch and `ACTIVE` state before claiming a key.
+Concurrent accepts can share that lock; a move updates the fence row and
+waits for their transactions to finish. Benchmark the lock and WAL cost
+at normal, peak, and headroom load.
+[PostgreSQL row-lock behavior](https://www.postgresql.org/docs/current/explicit-locking.html).
+
+To move a bucket, mark its old shard's acceptance fence draining and let
+in-flight transactions finish; stale ingress instances must receive a
+retryable error. Copy every unexpired registry row for the bucket to the
+target and verify counts and hashes before publishing a higher map epoch.
+The target then accepts new claims; the source rejects them. Event rows
+and pending outbox work stay on their original shard and remain reachable
+through stored locators. The source registry copy remains read-only until
+expiry for recovery checks. An interrupted move keeps the source as owner
+until the verified map cutover; after cutover, rollback requires the same
+fenced procedure in reverse. A shard-local `bucket_fence` check inside
+each acceptance transaction prevents stale cached maps from writing to
+the old owner. The map publisher and shard fences must be tested together
+before online moves are enabled; until then, use a fixed map and plan
+capacity without an assumed shard count.
+
+Admission limits and per-organization quotas protect against a hot tenant
+whose rate exceeds its share of ingress, storage, or delivery capacity.
+Track per-bucket rate and registry growth; a single repeatedly used key
+serializes on its registry row. Bounded backpressure returns a retryable
+response rather than allowing unbounded connection or outbox growth.
+After a crash or uncertain commit, retry with the same key, recompute its
+bucket, and read the registry on the current owner; locators preserve
+access to the original event even if the bucket was moved.
 
 #### PostgreSQL durability, failover, and backups
 
@@ -1239,12 +1324,17 @@ Payload:
   "event_id": "evt_...",
   "accepted_day": "2026-10-28",
   "ingestion_locator_version": 1,
+  "bucket_id": 3410,
+  "map_epoch": 1,
+  "ingestion_shard_id": "ing-a",
+  "delivery_shard_id": "dlv-a",
   "event_type": "order.created",
   "payload_hash": "..."
 }
 ```
 
-Partition key and locator are defined by the capacity gate. The routing
+Partition key is the opaque event locator, so messages for one event
+remain together; cross-event ordering is not promised. The routing
 consumer: 1. Validates the versioned event reference and organization
 against ingestion. 2. Reads the payload through the bounded internal API
 when filtering requires it. 3. Selects active subscriptions from the
