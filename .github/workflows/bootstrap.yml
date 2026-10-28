@@ -1,0 +1,33 @@
+name: Bootstrap
+
+on:
+  pull_request:
+    branches: [develop]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Test and package
+        run: mvn -B verify
+      - name: Build role images
+        run: |
+          for module in relayforge-control-plane relayforge-control-publisher relayforge-ingestion relayforge-ingestion-publisher relayforge-router relayforge-delivery-api relayforge-delivery-worker relayforge-delivery-publisher relayforge-retry-scheduler relayforge-analytics-consumer relayforge-analytics-api; do
+            docker build -f deploy/Dockerfile.service --build-arg MODULE="$module" -t "$module:ci" .
+          done
+      - name: Smoke test control-plane image
+        run: |
+          docker run -d --rm --name relayforge-bootstrap -p 18080:8080 relayforge-control-plane:ci
+          trap 'docker stop relayforge-bootstrap' EXIT
+          curl --fail --silent --show-error --retry 20 --retry-delay 1 --retry-connrefused -H 'X-Request-Id: ci-smoke' -D headers.txt -o response.json http://localhost:18080/health/ready
+          grep -qi '^X-Request-Id: ci-smoke' headers.txt
+          grep -q '"status":"UP"' response.json
