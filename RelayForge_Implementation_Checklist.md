@@ -23,7 +23,8 @@
 
 ### Capacity architecture gate before D0 and Milestone A
 
-- [ ] Revise the LLD physical schema for HLD §13 service ownership: local transactions/outboxes, versioned configuration projection or bounded reads, durable payload access, and no cross-service foreign keys.
+- [x] Define HLD §13 storage ownership and transaction boundaries in the LLD: local outboxes, versioned configuration projection and bounded reads, durable payload access, and no cross-service foreign keys.
+- [ ] Replace the LLD's logical SQL examples with deployable, service-owned physical DDL and migration order; verify all cross-service references and local constraints against the target PostgreSQL version.
 - [ ] Specify stable `(organization_id, idempotency_key)` ingestion shard routing, a 90-day shard-local idempotency registry, versioned event/delivery locators, hot-tenant handling, and restart/recovery semantics.
 - [ ] Finalize daily `accepted_day` partitions for event/delivery history, composite keys, local foreign keys, cross-service ownership checks, partition pre-creation, cutoff-day cleanup, and blocked-drop behavior. Keep configuration tables outside event-age purge.
 - [ ] Specify production primary/standby failover and backup strategy per write shard; require synchronous standby WAL confirmation before ingestion `202`, and a retryable failure when no synchronous standby is available. Do not assign an untested shard count.
