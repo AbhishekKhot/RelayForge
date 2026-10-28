@@ -1,13 +1,19 @@
 # RelayForge --- Low-Level Design (LLD)
 
-**Document version:** 1.3\
+**Document version:** 1.6\
 **Status:** Implementation baseline — aligned with final v1 decisions\
-**Aligned documents:** RelayForge Technical Specification v3.0;
-RelayForge High-Level Design v3.0\
+**Aligned documents:** RelayForge High-Level Design v3.3;
+RelayForge Implementation Checklist\
 **Primary stack:** Java 21, Spring Boot, PostgreSQL, Kafka, Redis,
 ClickHouse\
 **Design principle:** PostgreSQL is authoritative; Kafka transports
 work; ClickHouse serves eventually consistent analytics.
+
+**Capacity scope:** The SQL below is a logical field/transaction reference,
+not deployable partitioned DDL. HLD §13 defines service ownership and the
+90-day PostgreSQL lifecycle. Do not apply cross-service foreign keys or
+start Milestone A until the physical schema gate resolves shard routing,
+partition keys, idempotency, retention, and payload access.
 
 ------------------------------------------------------------------------
 
@@ -148,9 +154,11 @@ been published yet.
 
 ## 3. Suggested repository and package structure
 
-Use a modular monolith codebase with clear boundaries. Worker processes
-can launch different Spring profiles or entry points while reusing the
-same domain/application modules.
+The layout below is a legacy functional package map, not the high-volume
+physical deployment layout. HLD §13 and §8 now define four data-owning
+services and separate images for worker roles. Move each package and its
+tables under its owner during the capacity architecture gate; do not
+deploy all roles against one shared schema by default.
 
 ``` text
 relayforge/
@@ -344,8 +352,10 @@ identifiers; externally visible IDs may be UUIDs serialized as strings
 with prefixes for readability. If prefixed IDs are adopted, store UUIDs
 internally and map the prefix at the API boundary.
 
-The following schema is a logical baseline; column sizes and
-partitioning should be adjusted after benchmarks.
+The following schema lists logical fields and local constraints. It is not
+the physical partitioned/sharded migration: time-partitioned primary and
+unique keys must include the partition key. Section 5.13 specifies the
+physical design requirements to resolve before Flyway migrations.
 
 ### 5.1 `organizations`
 
@@ -432,7 +442,8 @@ CREATE TABLE endpoints (
                         CHECK (max_attempts BETWEEN 1 AND 20),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    version             BIGINT NOT NULL DEFAULT 1
+    version             BIGINT NOT NULL DEFAULT 1,
+    UNIQUE (id, organization_id)
 );
 CREATE INDEX idx_endpoints_org_status ON endpoints(organization_id, status);
 ```
@@ -459,7 +470,7 @@ only on registration-time checks.
 CREATE TABLE subscriptions (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES organizations(id),
-    endpoint_id     UUID NOT NULL REFERENCES endpoints(id),
+    endpoint_id     UUID NOT NULL,
     event_type      VARCHAR(200) NOT NULL,
     filter_config   JSONB,
     status          VARCHAR(24) NOT NULL DEFAULT 'ACTIVE'
@@ -467,7 +478,10 @@ CREATE TABLE subscriptions (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     version         BIGINT NOT NULL DEFAULT 1,
-    UNIQUE (organization_id, endpoint_id, event_type)
+    UNIQUE (organization_id, endpoint_id, event_type),
+    UNIQUE (id, organization_id),
+    FOREIGN KEY (endpoint_id, organization_id)
+        REFERENCES endpoints(id, organization_id)
 );
 CREATE INDEX idx_subscriptions_route
     ON subscriptions(organization_id, event_type, status, endpoint_id);
@@ -495,7 +509,8 @@ CREATE TABLE events (
                     CHECK (status IN ('ACCEPTED', 'ROUTING', 'ROUTED', 'NO_SUBSCRIBERS')),
     accepted_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (organization_id, idempotency_key)
+    UNIQUE (organization_id, idempotency_key),
+    UNIQUE (id, organization_id)
 );
 CREATE INDEX idx_events_org_created
     ON events(organization_id, created_at DESC, id DESC);
@@ -510,11 +525,14 @@ be stable and documented; do not hash arbitrary JSON serialization whose
 key order may vary.
 
 For v1, payloads are stored in PostgreSQL JSONB with a strict size cap.
-The documented default retention target for event payloads and
-associated delivery diagnostics is 30 days. **Automated data purge is
-deferred in v1**; this is a policy target, not an implemented cleanup
-job. Consider object storage only if measured payload size/retention
-requires it.
+Published event history and related delivery diagnostics expire 90 days
+after RelayForge's `accepted_at`, regardless of client `occurred_at`.
+Idempotency keys remain unique for 90 days in a separate shard-local
+registry committed atomically with event and outbox. Reuse after expiry
+creates a new event. The event table's unique constraint above is only
+the logical contract; it cannot enforce a cross-day window on daily
+partitions. Consider object storage only if measured payload size and
+retrieval requirements justify it; any copy needs a matching lifecycle.
 
 ### 5.7 `deliveries`
 
@@ -522,9 +540,9 @@ requires it.
 CREATE TABLE deliveries (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id     UUID NOT NULL REFERENCES organizations(id),
-    event_id            UUID NOT NULL REFERENCES events(id),
-    endpoint_id         UUID NOT NULL REFERENCES endpoints(id),
-    subscription_id     UUID REFERENCES subscriptions(id),
+    event_id            UUID NOT NULL,
+    endpoint_id         UUID NOT NULL,
+    subscription_id     UUID,
     generation          INTEGER NOT NULL DEFAULT 1,
     status              VARCHAR(32) NOT NULL DEFAULT 'PENDING'
                         CHECK (status IN (
@@ -533,6 +551,7 @@ CREATE TABLE deliveries (
                             'CANCELLED'
                         )),
     attempt_count       INTEGER NOT NULL DEFAULT 0,
+    claim_count         INTEGER NOT NULL DEFAULT 0,
     next_attempt_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     lease_owner          VARCHAR(160),
     lease_token          UUID,
@@ -544,7 +563,13 @@ CREATE TABLE deliveries (
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at        TIMESTAMPTZ,
     version             BIGINT NOT NULL DEFAULT 1,
-    UNIQUE (event_id, endpoint_id, generation)
+    UNIQUE (event_id, endpoint_id, generation),
+    FOREIGN KEY (event_id, organization_id)
+        REFERENCES events(id, organization_id),
+    FOREIGN KEY (endpoint_id, organization_id)
+        REFERENCES endpoints(id, organization_id),
+    FOREIGN KEY (subscription_id, organization_id)
+        REFERENCES subscriptions(id, organization_id)
 );
 CREATE INDEX idx_deliveries_due
     ON deliveries(status, next_attempt_at, created_at)
@@ -560,7 +585,13 @@ CREATE INDEX idx_deliveries_expired_lease
     WHERE status = 'IN_PROGRESS';
 ```
 
-The unique constraint ensures one logical delivery per
+`attempt_count` counts outbound HTTP requests begun, including a controlled
+refresh-and-retry after a destination 401. `claim_count` counts worker
+ownership claims, including claims that fail before destination HTTP.
+Authentication attempts are counted only in `authentication_attempts`.
+Enforce `max_attempts` against `attempt_count` immediately before each
+HTTP send; a lease recovery may create another claim without spending
+an HTTP attempt. The unique constraint ensures one logical delivery per
 event/endpoint/generation. Replay increments `generation` and creates a
 new delivery linked to the original via `replay_requests`.
 
@@ -644,10 +675,11 @@ CREATE INDEX idx_outbox_aggregate
     ON outbox(aggregate_type, aggregate_id, created_at);
 ```
 
-Document a default 30-day retention target for outbox rows, then purge
-eligible records after that period. **Automated purge is deferred in v1**;
-records are not deleted by this implementation. Never delete a pending
-or unpublished row merely because it is old.
+Remove published outbox rows on a separately configured operational
+schedule after broker acknowledgment and recovery checks. Never delete
+a pending or unpublished row merely because it is old; alert, recover,
+or explicitly terminate it before removing its event cohort. Test a
+publisher crash and replay through the recovery window.
 
 ### 5.11 `replay_requests` and `audit_records`
 
@@ -687,19 +719,74 @@ include secrets in `details`.
 
 -   Every organization-owned query MUST include the authenticated
     `organization_id`.
--   Add a composite ownership constraint where it materially protects
-    against mismatched organization/endpoint references.
+-   Enforce tenant ownership in the schema: add `UNIQUE (id, organization_id)`
+    to `endpoints`, `subscriptions`, and `events`, then composite foreign
+    keys from subscriptions to endpoints and from deliveries to events,
+    endpoints, and (when non-null) subscriptions using their respective
+    `(id, organization_id)` pairs. Retain application authorization checks.
+-   Expire historical event cohorts after 90 days; never age-purge
+    organizations, API keys, users, endpoints, or subscriptions. Keep
+    account/configuration audit records under a separate policy. Check
+    live work and references before detaching historical partitions;
+    use bounded cleanup for partial cutoff days and published outbox.
 -   Use Flyway migrations with forward-only schema changes in normal
     deployment.
--   Add indexes based on query plans and load tests; each index adds
+-   Add indexes based on query plans and the final load tests; each index adds
     write and storage overhead.
 -   Use `TIMESTAMPTZ` and UTC.
 -   Use optimistic version columns for editable endpoint/subscription
     configuration.
 -   Avoid using JSONB for high-cardinality fields used frequently in
     joins or predicates.
--   Do not partition tables preemptively. Measure row counts, vacuum
-    behavior, and query latency first.
+-   For the HLD §13 profile, design partition/shard keys, composite
+    uniqueness, and foreign-key scope before implementation. PostgreSQL
+    partitioned-table uniqueness must include the partition key. Size
+    the physical topology using measured row sizes and final load tests.
+
+### 5.13 Physical PostgreSQL design gate
+
+| Table | Lifecycle and intended owner |
+|---|---|
+| `organizations`, `api_keys`, `users`, `endpoints`, `subscriptions` | Control-plane configuration; no event-age purge |
+| `events` | Ingestion history; 90 days from `accepted_at` |
+| `deliveries`, `delivery_attempts`, `authentication_attempts`, `replay_requests` | Delivery history; expire with the source event's acceptance cohort |
+| `outbox` | Owner-local work; delete published rows after recovery checks, never pending rows by age |
+| `audit_records` | Retain account/configuration actions separately; event-specific details follow event lifecycle |
+
+Physical migrations MUST implement these contracts before Milestone A:
+
+1. Give historical rows an immutable UTC `accepted_day` copied from the
+   event; time-partition high-volume ingestion and delivery tables by
+   day within their owning write shard. Pre-create partitions and remove
+   fully expired cohorts only after active-work/reference checks. Define
+   bounded deletion or a monitored physical-deletion grace period for
+   the partial cutoff day. Replay cannot extend the source event's
+   retention window.
+2. Route ingestion by stable hash of `(organization_id, idempotency_key)`
+   to a shard. Commit the idempotency registry, event, and ingestion
+   outbox together. A shard-local registry enforces the 90-day key
+   window across event-day partitions; benchmark its bounded expiry
+   separately. Do not rely on `UNIQUE (organization_id, idempotency_key)`
+   on a time-partitioned events parent. Define a versioned locator so
+   event/delivery lookups and rebalancing remain deterministic.
+3. Route delivery records from the event locator; keep delivery and
+   ingestion writes in their respective owning databases. Replace the
+   example cross-service foreign keys with validated organization,
+   event, endpoint, and cohort references at message/API boundaries.
+   Within a database, composite keys and foreign keys must include
+   partition columns where needed. Test tenant isolation and replay
+   across day boundaries.
+4. Give every production write shard a primary and standby, backups,
+   monitored WAL/replication lag, and tested failover. Require
+   synchronous standby WAL confirmation before ingestion returns `202`;
+   return a retryable error if no synchronous standby is available.
+   Standbys do not increase primary write capacity. Do not assign a
+   shard count until write, disk, WAL, and tenant-skew measurements exist.
+5. Keep any old pending/in-flight outbox and active delivery visible
+   until recovered or explicitly terminated. A partition drop cannot
+   silently discard work. Align Kafka, backups, logs, and optional
+   payload copies with separately documented lifecycles. ClickHouse
+   retention is unchanged by this PostgreSQL decision.
 
 ------------------------------------------------------------------------
 
@@ -1172,15 +1259,27 @@ Do not hold a DB transaction during outbound HTTP.
 
 **Transaction A --- claim:** - Atomically update eligible delivery to
 `IN_PROGRESS`. - Set `lease_owner`, random `lease_token`, and
-`lease_expires_at`. - Increment attempt count or reserve the attempt
-number atomically. - Insert an `IN_PROGRESS` attempt record. - Commit.
+`lease_expires_at`. - Increment `claim_count`; leave `attempt_count`
+unchanged. - Commit.
 
 **Outside transaction:** - Load endpoint configuration and secrets. -
-Build URL/request. - Acquire token if needed. - Make HTTP call with
-strict timeout. - Capture bounded response metadata.
+Build URL/request. - Acquire token if needed. Authentication failures
+produce authentication records but no webhook attempt.
 
-**Transaction B --- finalize:** - Lock delivery and verify current
-`lease_token` matches. - Finalize attempt record. - If successful, mark
+**Transaction B --- reserve HTTP attempt:** - Verify the live lease token
+and remaining `max_attempts` budget. - Increment `attempt_count` and
+insert an `IN_PROGRESS` delivery attempt with that number. - Commit.
+Then make the HTTP call outside a transaction with strict deadlines and
+capture bounded response metadata. A controlled refresh-and-retry after
+a destination 401 reserves another attempt. If a worker crashes after
+reservation but before send, the attempt remains an unknown/aborted
+attempt and consumes one attempt slot; this is preferable to an
+unbounded retry loop and must be visible in history.
+
+**Transaction C --- finalize:** - Lock delivery and verify current
+`lease_token` matches. - Finalize the attempt record if HTTP was reserved;
+for auth-only failure, persist an auth outcome without an HTTP attempt.
+- If successful, mark
 `SUCCEEDED` and set `completed_at`. - If retryable and within policy,
 mark `RETRY_SCHEDULED` and set `next_attempt_at`. - If permanent or
 retry limit reached, mark `DEAD_LETTERED`. - Insert analytics outbox
@@ -1272,8 +1371,8 @@ UPDATE deliveries
 SET status = 'IN_PROGRESS',
     lease_owner = :worker_id,
     lease_token = :lease_token,
-    lease_expires_at = now() + interval '60 seconds',
-    attempt_count = attempt_count + 1,
+    lease_expires_at = now() + :lease_interval,
+    claim_count = claim_count + 1,
     updated_at = now(),
     version = version + 1
 WHERE id = :delivery_id
@@ -1289,12 +1388,14 @@ when due.
 
 ### 9.3 Lease duration
 
-Lease duration must exceed the maximum bounded execution time plus
-finalization margin, or be extended by heartbeat. Since token
-acquisition plus webhook request can exceed one HTTP timeout, define an
-overall attempt deadline and either: - choose a lease larger than the
-overall deadline plus margin; or - renew the lease with a
-compare-and-set on `lease_token`.
+Set a 240-second overall processing deadline per claim: token acquisition
+at most 90 seconds, then at most two 60-second destination requests
+(the second only after a 401), plus bounded database/finalization time.
+Renew a 60-second lease with a compare-and-set on `lease_token` before
+expiry while work is live. Stop sending if renewal fails or the overall
+deadline is reached. A production configuration may lower these limits,
+but must satisfy the same deadline/renewal invariant. Test slow token
+exchange followed by slow webhook and a competing recovery worker.
 
 Do not use unbounded token calls or HTTP calls. If a worker loses its
 lease, it must not finalize state.
@@ -1644,8 +1745,13 @@ configuration to set unbounded timeout values.
     database transaction succeeds.
 -   Make consumer handlers idempotent.
 -   Configure bounded poll records and concurrency.
--   Pause partitions or use bounded executor queues when downstream DB
-    capacity is exhausted.
+-   The poll thread must continue polling while slow HTTP attempts run
+    in a bounded worker pool. Pause assigned partitions when that pool
+    is full; resume when capacity returns. Commit each partition's
+    offsets only through its contiguous completed records, never past
+    an unfinished attempt. Handle rebalances without losing lease
+    ownership; duplicate work remains safe after recovery. Set and test
+    `max.poll.interval.ms` against the poll loop, not the HTTP deadline.
 -   Retry transient infrastructure errors with bounded delay; route
     poison messages to a dead-letter topic or durable failure record
     after a bounded policy.
@@ -1735,37 +1841,31 @@ commit fails, the same `fact_id` and `version` are inserted again; this
 is expected and must be safe.
 
 `ReplacingMergeTree(version)` removes duplicate sorting keys during
-background merges, not synchronously at insert time. For correctness-
-sensitive queries, use `FINAL` when its cost is acceptable or aggregate
-with `argMax(..., version)` grouped by the complete logical key. Do not
-assume a normal `SELECT` immediately returns one row per `fact_id`.
+background merges, not synchronously at insert time. Use `FINAL` for
+correctness-sensitive queries and benchmark its cost. Do not assume a
+normal `SELECT` immediately returns one row per `fact_id`. Corrections
+must increment `version`; producers must generate identical content for
+the same `(fact_id, version)`. Validate that invariant in contract tests;
+ClickHouse does not enforce uniqueness at insert time.
 
 Example query returning deduplicated facts for an organization and time
-range:
+range; `FINAL` selects all nullable fields from the same row:
 
 ```sql
 SELECT
-    fact_id,
-    argMax(fact_type, version) AS fact_type,
-    argMax(status, version) AS status,
-    argMax(event_id, version) AS event_id,
-    argMax(delivery_id, version) AS delivery_id,
-    argMax(endpoint_id, version) AS endpoint_id,
-    argMax(occurred_at, version) AS occurred_at,
-    argMax(http_status, version) AS http_status,
-    argMax(duration_ms, version) AS duration_ms
-FROM relayforge_analytics.delivery_facts
+    fact_id, fact_type, status, event_id, delivery_id,
+    endpoint_id, occurred_at, http_status, duration_ms
+FROM relayforge_analytics.delivery_facts FINAL
 WHERE organization_id = {organization_id:UUID}
   AND event_date >= {start_date:Date}
-  AND event_date <= {end_date:Date}
-GROUP BY fact_id;
+  AND event_date <= {end_date:Date};
 ```
 
 The API layer must always inject the authenticated organization ID; it
 must not trust an organization ID supplied by the caller. Bound time
-ranges and query timeouts are required. `argMax` resolves versions of a
-single logical fact; it does not make separate fact IDs representing
-separate events equivalent.
+ranges and query timeouts are required. A future aggregate optimization
+must select an entire latest row with deterministic tie handling, not
+call `argMax` separately on nullable columns.
 
 ### 14.4 Optional daily rollup table (deferred)
 
@@ -2013,11 +2113,10 @@ The following final decisions are part of this LLD:
    documented classifications.
 8. Routing snapshots matching subscriptions and endpoint identifiers;
    the worker still checks current endpoint status/config before sending.
-9. Document 30-day default retention for payloads and delivery
-   diagnostics. Automated purge is deferred and not implemented in v1.
-10. Document 30-day outbox retention followed by purge. Automated purge
-    is deferred and not implemented in v1; unpublished rows are never
-    purged.
+9. Implement and test a 90-day acceptance-based lifecycle for published
+   events and delivery history. Configuration tables are not age-purged.
+10. Purge eligible published outbox rows on an operational schedule;
+    unpublished rows are never purged by age alone.
 11. No ordering guarantee in v1.
 12. Quotas are persisted in PostgreSQL (`organizations.quota_config`)
     and cached in Redis. Plan defaults apply unless overrides are
@@ -2034,12 +2133,19 @@ The following final decisions are part of this LLD:
     per-key distributed coordination, cache re-check after lock, and
     early refresh reduce stampedes.
 
-Implementation configuration still required (these do not change the architecture):
+Implementation design and configuration still required before Milestone A:
+- Replace shared-schema cross-service foreign keys with explicit ownership,
+  versioned contracts, and local projections for the HLD §13 service split.
+- Finalize physical DDL for event/idempotency shard routing, daily event
+  cohorts, delivery history, payload access, hot-tenant policy, and
+  90-day retention of billions of rows.
+- Keep each service's event/outbox transaction local to its own database.
 - Set concrete quota defaults and hard platform maximums in configuration and tests.
 - Select the envelope-encryption algorithm/key provider and document key rotation.
 - Select and pin the JSONPath library used only for token-response extraction.
 - Measure ClickHouse query-time deduplication cost and record benchmark evidence.
-- Automated 30-day retention purge is explicitly deferred; document it and do not imply it runs.
+- Benchmark retention cleanup, disk growth, and query-time `FINAL` after
+  all functional and end-to-end tests pass.
 
 ------------------------------------------------------------------------
 
@@ -2073,8 +2179,8 @@ The first end-to-end release is complete when:
 
 ## References
 
-The design is based on the RelayForge Technical Specification v3.0 and
-High-Level Design v3.0. External technology documentation to consult
+The design is based on RelayForge High-Level Design v3.3 and the
+implementation checklist. External technology documentation to consult
 during implementation:
 
 -   PostgreSQL: https://www.postgresql.org/docs/

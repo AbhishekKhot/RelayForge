@@ -1,8 +1,8 @@
 # RelayForge — High-Level Design
 
-**Document version:** 3.0  
+**Document version:** 3.3
 **Status:** Baseline for implementation  
-**Aligned documents:** RelayForge Technical Specification v3.0; RelayForge Low-Level Design v1.3  
+**Aligned documents:** RelayForge Low-Level Design v1.6; RelayForge Implementation Checklist
 **Primary stack:** Java 21, Spring Boot, PostgreSQL, Kafka, Redis, ClickHouse
 
 ---
@@ -35,7 +35,7 @@ This document describes the system boundary, logical components, data flow, depl
 - Guaranteed global ordering or guaranteed per-endpoint ordering.
 - A visual workflow builder or arbitrary user-defined code execution.
 - Dedicated infrastructure per customer account.
-- A large number of independently deployed microservices before measurements justify them.
+- Additional customer-specific services or infrastructure without a measured need.
 
 ## 3. Architecture principles
 
@@ -45,7 +45,7 @@ This document describes the system boundary, logical components, data flow, depl
 4. **Delivery is at-least-once.** RelayForge may send a duplicate request if the receiver processed it but RelayForge did not record the success. The stable `delivery_id` can be used by receivers as a deduplication key.
 5. **Separate the control path from the delivery path.** API/configuration operations should not wait for customer endpoints to respond.
 6. **Scale by workload.** Ingestion, outbox publishing, delivery workers, and analytics consumers can have different replica counts.
-7. **Start as a modular application.** Logical modules are not automatically separate microservices. Split deployables only when independent scaling, failure isolation, or ownership makes it worthwhile.
+7. **Separate ownership from runtime roles.** Four domain services own their data; routing, HTTP delivery, scheduling, and publication run as independently scalable roles within those boundaries.
 8. **Shared infrastructure, scoped access.** Customer-owned records are scoped by an internal organization/account ID; all authorization and quota checks are server-side. This does not imply separate databases or deployments per customer.
 
 ## 4. System context
@@ -69,6 +69,10 @@ flowchart LR
 - **Platform operator:** manages service health and operational controls through restricted operator access; operator APIs are not part of the public organization API surface.
 
 ## 5. Logical architecture
+
+The diagram below describes data flow. Its single API and PostgreSQL
+symbols represent the logical interface and authoritative storage;
+the physical service and database boundaries are defined in §8 and §13.
 
 ```mermaid
 flowchart TB
@@ -346,22 +350,25 @@ Delivery-work and analytics publication use transactional outbox records. This a
 
 ## 8. Deployment view
 
-### Initial logical deployables
+### Planned deployables
 
 | Deployable | Responsibilities | Scaling signal |
 |---|---|---|
-| `relayforge-api` | REST APIs, auth, endpoint/subscription configuration, event ingestion, history/replay APIs | Request rate, p95 latency, CPU, connection pool usage |
-| `relayforge-outbox-publisher` | PostgreSQL outbox to Kafka | Outbox backlog count/age, publish throughput |
-| `relayforge-routing-worker` | Event-to-delivery routing | Kafka consumer lag, routing throughput, DB write latency |
-| `relayforge-delivery-worker` | Outbound webhook attempts and result recording | Due-delivery backlog, attempt throughput, endpoint latency |
-| `relayforge-retry-scheduler` | Due retries and expired-lease recovery | Oldest overdue delivery, due-row scan duration |
-| `relayforge-analytics-consumer` | Delivery facts to ClickHouse | Kafka lag, ingestion lag, ClickHouse insert latency |
+| `relayforge-control-plane` | Organizations, credentials, endpoint/subscription configuration | Configuration API latency and change propagation |
+| `relayforge-ingestion` | Event API, idempotency, payload storage, accepted-event outbox | Accepted events/s, commit latency, event backlog |
+| `relayforge-ingestion-publisher` | Ingestion outbox to Kafka | Accepted-event outbox age |
+| `relayforge-router` | Subscription projection, fan-out, delivery creation | Routing lag, delivery DB write latency |
+| `relayforge-delivery-worker` | Bounded outbound HTTP and authoritative result recording | Due backlog, attempt rate, receiver latency |
+| `relayforge-delivery-publisher` | Delivery outbox to Kafka | Delivery/analytics outbox age |
+| `relayforge-retry-scheduler` | Due retries and expired-lease recovery | Oldest overdue work, scan duration |
+| `relayforge-analytics-consumer` | Delivery facts into ClickHouse | Analytics Kafka lag, ClickHouse insert latency |
+| `relayforge-analytics-api` | Bounded organization-scoped analytical queries | Query p95, concurrency, ClickHouse load |
 
-These are suggested process boundaries, not mandatory separate microservices from day one. For a portfolio implementation, start with the API plus one or two worker applications if that keeps operations manageable. Preserve module boundaries and split processes when independent scaling or fault isolation is demonstrated by measurements.
+Control plane, ingestion, delivery, and analytics are the four ownership boundaries. The publisher, router, worker, and scheduler images can scale independently while using their owning service's storage and contracts. Each image needs functional Docker tests; actual replica counts come from the final benchmark.
 
 ### Shared platform dependencies
 
-- PostgreSQL primary, with backups and migrations; connection pooling.
+- Service-owned PostgreSQL storage with backups, migrations, connection pooling, and a documented partition/shard plan; physical cluster count remains a capacity decision.
 - Kafka cluster/topics with replication appropriate to the environment. A single-broker local profile is development-only.
 - Redis for cache/limits/ephemeral state.
 - ClickHouse for analytics facts and queries.
@@ -372,22 +379,24 @@ These are suggested process boundaries, not mandatory separate microservices fro
 
 ```text
 relayforge/
-├── relayforge-api/
-├── relayforge-outbox-publisher/
-├── relayforge-routing-worker/
+├── relayforge-control-plane/
+├── relayforge-ingestion/
+├── relayforge-ingestion-publisher/
+├── relayforge-router/
 ├── relayforge-delivery-worker/
+├── relayforge-delivery-publisher/
 ├── relayforge-retry-scheduler/
 ├── relayforge-analytics-consumer/
-├── relayforge-common/              # shared contracts/utilities; keep narrow
+├── relayforge-analytics-api/
+├── relayforge-contracts/           # versioned messages; no shared domain logic
 ├── deploy/
 ├── docs/
-│   ├── technical-specification-v3.0.md
-│   ├── high-level-design-v3.0.md
+│   ├── high-level-design.md
 │   └── decisions/
 └── load-tests/
 ```
 
-If the first implementation is a single Spring Boot codebase, these names can initially be package/module names rather than separate repositories or deployables. Avoid a `relayforge-common` module becoming a dumping ground for business logic.
+Keep shared code to versioned contracts and transport helpers. Each domain service owns its schema and migrations; Docker images are built for each deployable role.
 
 ## 9. Data ownership and storage boundaries
 
@@ -395,17 +404,17 @@ If the first implementation is a single Spring Boot codebase, these names can in
 |---|---|---|
 | Organization/account metadata and API credentials | PostgreSQL | API keys stored as hashes; raw key shown only once at creation |
 | Endpoints, auth profiles, and event-type subscriptions | PostgreSQL | URL validation, encrypted secrets/secret references, organization-scoped access |
-| Accepted event payload and idempotency key | PostgreSQL | Apply payload size and retention limits |
+| Accepted event payload and idempotency key | Ingestion-owned PostgreSQL | Event history expires after 90 days; the idempotency registry has its own 90-day key lifetime |
 | Publication intent | PostgreSQL outbox records | Atomic with event acceptance, delivery creation, or delivery-state transition as applicable |
-| Event and delivery routing state | PostgreSQL | Uniqueness constraints make consumers idempotent |
-| Delivery attempts and retry schedule | PostgreSQL | Authoritative status and recovery metadata |
+| Event and delivery routing state | Delivery-owned PostgreSQL | Event-related history expires with its acceptance cohort |
+| Delivery attempts and retry schedule | Delivery-owned PostgreSQL | Authoritative state while active; historical rows expire with their event |
 | Work transport | Kafka topics `event.accepted`, `delivery.ready`, `analytics.delivery-facts` | Messages may repeat; consumers must be idempotent |
 | Rate-limit/cache/circuit state | Redis | Ephemeral; never authoritative for delivery |
 | Delivery facts and aggregates | ClickHouse | Eventually consistent; analytics-only |
 
 ### Key constraints
 
-- Unique `(organization_id, idempotency_key)` for event ingestion within the documented retention window.
+- Enforce `(organization_id, idempotency_key)` uniqueness for 90 days in a shard-local registry committed with event and outbox, independent of event-history time partitions.
 - Unique `(event_id, endpoint_id)` for one logical delivery per matching endpoint, unless replay semantics explicitly create a new generation.
 - Organization-scoped access in every query; an opaque ID is not authorization.
 - Index due-work scans by status and `next_attempt_at`; avoid unbounded scans.
@@ -466,11 +475,37 @@ Alert on growing outbox age, Kafka lag, old overdue deliveries, high retry/dead-
 
 ## 13. Capacity and scaling approach
 
-The Technical Specification v3.0 defines these as targets, not measured guarantees:
+The following are **planning assumptions, not measured guarantees**. Keep account count and endpoint count separate from throughput: neither determines event rate by itself. Assume 100 accounts, 10,000 active endpoints, average fan-out 3, and 1.1 outbound attempts per delivery. The attempted-request rate is `accepted events/s × 3 × 1.1`.
 
-- Baseline: 100 customer accounts, 10,000 active endpoints, average fan-out 3, 1,000 accepted events/s, estimated approximately 3,300 delivery attempts/s at 1.1 attempts per delivery.
-- Stretch: 1,000 customer accounts, 100,000 active endpoints, average fan-out 3, 5,000 accepted events/s, estimated approximately 16,500 delivery attempts/s.
-- A 50,000 virtual-user test is not equivalent to 50,000 QPS.
+| Profile | Accepted events/s | Estimated outbound attempts/s | Planning meaning |
+|---|---:|---:|---|
+| Normal | 5,000 | 16,500 | Sustained target |
+| Peak | 10,000 | 33,000 | Burst target; duration selected for final tests |
+| Capacity headroom | 15,000 | 49,500 | Additional 5,000 events/s above peak; final capacity test |
+
+At 5,000 events/s continuously for 90 days, expect 38.88 billion events, 116.64 billion logical deliveries, and about 128.30 billion outbound attempts before auxiliary rows. Even a 1 KiB average payload implies about 39.81 TB of raw payload bytes, excluding replicas, indexes, WAL, metadata, and backups. These are arithmetic planning figures, not storage benchmarks. A 50,000 virtual-user test is not equivalent to 50,000 QPS.
+
+Headroom is 50% above peak admission, not an automatic autoscaling promise. At 200 ms mean in-flight time, the three profiles imply roughly 3,300, 6,600, and 9,900 concurrent outbound attempts; at 1 second, five times as many. Define arrival shape, receiver latency distribution, failures, tenant skew, payload size, accepted-event p95/p99, delivery lag, and permissible backlog drain time in the final benchmark. If processing capacity falls below arrivals, throttle admission before durable backlogs exceed the tested recovery envelope.
+
+**Technology decisions for this profile:** PostgreSQL remains the transactional authority for acceptance, uniqueness, and active delivery state. Time partition high-volume history from the first physical schema so expired cohorts can be detached and dropped. Plan independent ingestion and delivery write shards because partitioning within one primary does not distribute writes. Keep control-plane data separate. Kafka remains transport for independently scaled consumers; Redis remains cache/coordination; ClickHouse remains analytical storage with its current retention policy unchanged. Hardware sizes and shard counts require measured write, WAL, disk, and tenant-skew data.
+
+### PostgreSQL lifecycle and topology
+
+The **90-day UTC clock starts at RelayForge acceptance**, not customer-supplied `occurred_at`. `organizations`, `api_keys`, `users`, `endpoints`, and `subscriptions` remain until their own account/configuration lifecycle applies. Published `events`, `deliveries`, `delivery_attempts`, `authentication_attempts`, and `replay_requests` expire as one event cohort. Account and configuration `audit_records` have a separate policy; any event-specific audit detail must follow the event-history policy. Replay is unavailable after the source event expires.
+
+Use daily time partitions for historical event and delivery tables, with an immutable acceptance-day key copied to related rows. Pre-create partitions; remove a fully expired day only after checking dependent work, then detach and drop it. Use bounded deletion for the cutoff day or define and monitor a short physical-deletion grace period. Time-partitioned primary/unique keys must contain the partition key, so the LLD's current UUID-only and `(organization_id, idempotency_key)` constraints are logical contracts, not deployable partitioned DDL.
+
+Route an ingestion request by a stable hash of `(organization_id, idempotency_key)` to one write shard. That shard commits a 90-day idempotency-registry entry, event, and outbox record atomically. The registry retains a unique key across daily event partitions and needs bounded expiry and its own write/delete benchmark. Carry a versioned shard locator in event and delivery identifiers/messages; route delivery state consistently using the event locator. This distributes a hot organization's distinct keys across shards. Rebalancing, locator versioning, payload retrieval, and cross-service ownership checks are required LLD contracts; no cross-service foreign keys or transactions.
+
+Each production write shard has a primary, at least one standby, backups, and tested failover. Standbys provide availability and optional read capacity, not additional write capacity. Ingestion requires synchronous WAL confirmation on a standby before `202`; if no synchronous standby is available, fail acceptance with a retryable error rather than silently weaken durability. This increases commit latency and can reduce availability; measure the tradeoff. An asynchronous promoted standby can miss an already acknowledged commit. Use the primary for authoritative immediate reads. Confirm shard count with final load tests. [PostgreSQL replication guarantees](https://www.postgresql.org/docs/current/warm-standby.html).
+
+Published outbox rows may be removed on a shorter operational schedule after broker acknowledgment and recovery checks. Pending/in-flight rows are never purged merely by age: alert, recover or explicitly terminate the work before its event cohort is removed. Kafka retention, backups, logs, and external payload copies need their own lifecycle; this decision does not change ClickHouse retention.
+
+**Service boundaries:** `control-plane` owns accounts, API keys, endpoint/subscription configuration, and secrets; `ingestion` owns idempotency, accepted events, payloads, and its outbox; `delivery` owns routing progress, logical deliveries, attempts, retries, replay, and its outbox; `analytics` owns analytical ingestion and queries. Routing, outbound HTTP workers, scheduler, and each outbox publisher are separately deployable processes within their owning service and have separate Docker images and scaling signals. Services exchange versioned events or bounded read APIs; they do not write another service's tables. Delivery must have a versioned configuration projection or bounded control-plane read, and a durable payload retrieval contract. Cross-service foreign keys and cross-service transactions in the current LLD schema must be replaced before implementation of independently owned databases. Preserve `202` only after the ingestion event/outbox transaction commits.
+
+**Capacity design gate:** Before Milestone A, finish the LLD physical DDL for shard-local idempotency, composite cohort keys, payload retrieval, routing snapshots, retained-work expiry, and failover. A shared PostgreSQL schema is suitable for Docker functional tests, not evidence that this profile will fit on one primary. Run the full normal/peak/headroom load suite only after every feature and end-to-end test passes. If the final benchmark misses targets, revise the topology or admission limits; do not claim capacity from design alone.
+
+Implementation facts underlying these choices: [PostgreSQL composite constraints and foreign keys](https://www.postgresql.org/docs/current/ddl-constraints.html), [PostgreSQL partitioning and retention tradeoffs](https://www.postgresql.org/docs/current/ddl-partitioning.html), [Kafka consumer group partition assignment and poll behavior](https://kafka.apache.org/43/javadoc/org/apache/kafka/clients/consumer/KafkaConsumer.html), and [ClickHouse replacement semantics](https://clickhouse.com/docs/en/guides/replacing-merge-tree).
 
 Scale in this order, guided by measurements:
 
@@ -478,9 +513,9 @@ Scale in this order, guided by measurements:
 2. Batch outbox claims and Kafka publication while preserving recoverability.
 3. Increase routing and delivery worker concurrency independently; protect PostgreSQL with bounded concurrency.
 4. Partition Kafka topics based on measured throughput and skew; choose keys based on the ordering/fairness contract.
-5. Use ClickHouse for dashboard aggregation rather than running large analytics scans on PostgreSQL.
+5. Benchmark bounded ClickHouse dashboard queries; compare their cost and latency with PostgreSQL summaries before fixing the analytics storage choice.
 6. Add caching only for measured hot reads; do not cache authoritative delivery state without a clear invalidation/freshness policy.
-7. Partition large PostgreSQL tables or consider sharding only after observed limits and operational cost justify it.
+7. Validate the planned partition and shard boundaries against measured row sizes, write amplification, query plans, retention, and tenant skew before declaring a production topology.
 
 Benchmark reports must record payload size, fan-out, receiver latency, failure mix, retry rate, hardware, database configuration, topic/partition count, test duration, and load-generator capacity. Do not publish target figures as achieved performance until measured.
 
@@ -543,7 +578,7 @@ The following are implementation constraints, not open design questions:
 - Token-cache keys include organization, endpoint, auth-configuration version, and credential version. Use TTL jitter, local single-flight, per-key distributed coordination, cache re-check after lock acquisition, and early refresh.
 - Quotas live in `organizations.quota_config`; Redis is a cache/coordination layer. Redis failure uses bounded fallback and safe platform limits. Quota-sensitive writes fail closed when PostgreSQL is unavailable.
 - ClickHouse analytics use `relayforge_analytics.delivery_facts` with `ReplacingMergeTree(version)`. Duplicate facts reuse the same `fact_id` and `version`; query-time deduplication is used where required.
-- Payloads and delivery diagnostics have a documented 30-day default retention. Automated purge is deferred in v1. Unpublished outbox rows must never be purged.
+- Published events and delivery history have a 90-day acceptance-based lifecycle with tested partition removal and bounded cutoff cleanup. Idempotency keys remain unique for 90 days; reuse after expiry is a new event. Account/configuration records remain under separate policies. Purge only published outbox rows after recovery checks; never purge unpublished work by age.
 - ClickHouse stores analytical facts only; payloads, secrets, and authoritative delivery state remain outside ClickHouse.
 - Secrets use application-level envelope encryption or a configured secret reference. Auth configuration is declarative and allowlisted; no arbitrary scripts or payload interpolation.
 - Endpoint URLs are protected against SSRF at registration and delivery: validate DNS/IP targets, reject private/reserved/metadata destinations by default, disable redirects, and enforce egress timeouts.
@@ -560,7 +595,7 @@ Implementation and manual verification are tracked in `RelayForge_Implementation
 6. Retry scheduler, leases, crash recovery, dead-lettering, and audited replay.
 7. Token exchange, cache coordination, and authentication failure diagnostics.
 8. Analytics outbox, ClickHouse DDL/consumer, and analytics APIs.
-9. Quotas, security hardening, observability, retention documentation, and operational controls.
+9. Quotas, security hardening, observability, tested retention cleanup, and operational controls.
 10. End-to-end Docker tests, failure injection, and measured load tests.
 
 ## 18. HLD exit criteria
@@ -571,4 +606,4 @@ The HLD does not claim implementation or performance benchmarks are complete. Th
 
 ---
 
-**Status:** Final architecture baseline for RelayForge v1. Exact class, schema, API, Kafka envelope, state-machine, ClickHouse DDL, and test contracts are specified in LLD v1.3.
+**Status:** Planning baseline for RelayForge v1. LLD v1.6 retains functional contracts; its physical schema gate must pass before the high-volume implementation. Capacity and topology remain subject to benchmark evidence.
