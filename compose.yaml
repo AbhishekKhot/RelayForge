@@ -43,6 +43,14 @@ x-test: &test
   restart: "no"
 
 services:
+  kafka-data-init:
+    image: ${KAFKA_IMAGE:?Set KAFKA_IMAGE in .env}
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c", "chown -R 1000:1000 /tmp/kraft-combined-logs"]
+    volumes:
+      - kafka-data:/tmp/kraft-combined-logs
+    restart: "no"
+
   postgres:
     image: ${POSTGRES_IMAGE:?Set POSTGRES_IMAGE in .env}
     environment:
@@ -90,6 +98,9 @@ services:
       - "127.0.0.1:${KAFKA_HOST_PORT:?Set KAFKA_HOST_PORT in .env}:19092"
     volumes:
       - kafka-data:/tmp/kraft-combined-logs
+    depends_on:
+      kafka-data-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
       interval: 10s
