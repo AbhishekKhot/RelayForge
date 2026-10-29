@@ -1,0 +1,6 @@
+.git
+**/target
+.env
+.env.*
+AGENTS.md
+RelayForge_Project_Discussion_QA.md

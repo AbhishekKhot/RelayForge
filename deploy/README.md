@@ -1,6 +1,6 @@
 # Deployment plan
 
-Each independently runnable role has its own image and Docker functional test target. `relayforge-contracts` is a library and has no image. The first Dockerfiles and `compose.yaml` are implementation tasks; the names below are the contract for those tasks.
+Each independently runnable role has its own image and Docker functional test target. `relayforge-contracts`, `relayforge-runtime`, and `relayforge-api-support` are libraries and have no images. `Dockerfile.service` builds a separate runnable image for a selected module; `compose.yaml` and the `test-*` targets are D0 implementation tasks.
 
 | Maven module | Runtime image | Compose service | Docker test target |
 |---|---|---|---|

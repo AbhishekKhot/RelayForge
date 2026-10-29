@@ -7,4 +7,34 @@
         <version>0.1.0-SNAPSHOT</version>
     </parent>
     <artifactId>relayforge-control-plane</artifactId>
+    <dependencies>
+        <dependency>
+            <groupId>com.relayforge</groupId>
+            <artifactId>relayforge-db-migration</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.relayforge</groupId>
+            <artifactId>relayforge-api-support</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
 </project>
