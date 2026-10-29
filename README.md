@@ -69,7 +69,19 @@ docker compose logs -f control-publisher router delivery-worker
 docker compose down
 ```
 
-The generator creates `.env` with owner-only permissions and refuses to replace an existing file. The four REST ports are `18080` (control), `18081` (ingestion), `18082` (delivery), and `18083` (analytics); the webhook simulator is `18084`. PostgreSQL, Kafka, and ClickHouse bind to `127.0.0.1` on ports `15432`, `19092`, and `18123`. These values can be changed in `.env`. The database name, user, password, JDBC URL, broker address, and other connection settings are read from that file. There are no public application APIs yet; `GET /health/live` and `GET /health/ready` are the available HTTP examples.
+The generator creates `.env` with owner-only permissions and refuses to replace an existing file. The four REST ports are `18080` (control), `18081` (ingestion), `18082` (delivery), and `18083` (analytics); the webhook simulator is `18084`. PostgreSQL, Kafka, and ClickHouse bind to `127.0.0.1` on ports `15432`, `19092`, and `18123`. These values can be changed in `.env`. The database name, user, password, JDBC URL, broker address, and other connection settings are read from that file. `GET /health/live` and `GET /health/ready` are available on every role; the control-plane provisioning APIs are described below.
+
+For an existing local `.env`, run `python3 scripts/create-env.py --add-missing` after pulling a change that adds settings. It appends generated values for missing keys and keeps the file private.
+
+### Organization provisioning
+
+The control plane accepts trusted `POST /v1/organizations` and `POST /v1/users` requests. Its separate provisioning credential is `TRUSTED_PROVISIONING_CREDENTIAL` in the ignored `.env`; the API-key HMAC key is `API_KEY_HMAC_KEY`. Organization creation requires an `Idempotency-Key` header. The initial `FREE` plan has default quotas of 600 events per minute, 25 active endpoints, and 100 in-flight deliveries. Example request body:
+
+```json
+{"name":"Acme Payments","plan_code":"FREE","quota_overrides":{"events_per_minute":1200}}
+```
+
+The `201` response contains `organization_id` and the API key once. Use `Authorization: Bearer <api_key>` for `GET /v1/auth/check` and `GET /v1/organizations/{organization_id}`. A key can read only its own organization. Trusted `POST /v1/api-keys/{key_id}/rotate` returns a replacement key once and revokes the old one; `POST /v1/api-keys/{key_id}/revoke` invalidates a key. If a provisioning response is lost, `GET /v1/organizations/recover` with the original `Idempotency-Key` and provisioning credential returns only the organization and public key IDs. See the [A3 decision record](docs/decisions/organization-provisioning.md) for scope and quota policy.
 
 Run `scripts/verify-compose.sh` for the clean boot checkpoint, dependency failure checks, and restart persistence check. It leaves the stack running. `docker compose down` stops it and retains named volumes. For disposable local data only, `docker compose down -v` deletes the PostgreSQL, Kafka, Redis, and ClickHouse volumes.
 

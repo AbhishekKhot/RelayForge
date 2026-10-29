@@ -46,12 +46,17 @@ class OwnerMigrationsIT {
         migrateTwice("control_plane", "control-plane");
         try (var connection = connection("control_plane")) {
                 assertThat(count(connection, "SELECT count(*) FROM flyway_schema_history WHERE success AND version = '1'")).isEqualTo(1);
+                assertThat(count(connection, "SELECT count(*) FROM flyway_schema_history WHERE success AND version = '2'")).isEqualTo(1);
                 execute(connection, "INSERT INTO organizations (id, name) VALUES ('00000000-0000-0000-0000-000000000001', 'one'), ('00000000-0000-0000-0000-000000000002', 'two')");
                 execute(connection, "INSERT INTO endpoints (id, organization_id, name, base_url, path, auth_type) VALUES ('00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 'first', 'https://example.com', '/', 'NONE')");
                 assertThatThrownBy(() -> execute(connection, "INSERT INTO subscriptions (organization_id, endpoint_id, event_type) VALUES ('00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000003', 'order.created')"))
                         .isInstanceOf(SQLException.class);
                 execute(connection, "INSERT INTO subscriptions (organization_id, endpoint_id, event_type) VALUES ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000003', 'order.created')");
                 assertThatThrownBy(() -> execute(connection, "INSERT INTO subscriptions (organization_id, endpoint_id, event_type) VALUES ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000003', 'order.created')"))
+                        .isInstanceOf(SQLException.class);
+                execute(connection, "INSERT INTO api_keys (organization_id, key_id, secret_hash) VALUES ('00000000-0000-0000-0000-000000000001', 'test-key', decode(repeat('aa', 32), 'hex'))");
+                execute(connection, "INSERT INTO provisioning_requests (request_hash, organization_id, key_id) VALUES (decode(repeat('bb', 32), 'hex'), '00000000-0000-0000-0000-000000000001', 'test-key')");
+                assertThatThrownBy(() -> execute(connection, "INSERT INTO provisioning_requests (request_hash, organization_id, key_id) VALUES (decode(repeat('bb', 32), 'hex'), '00000000-0000-0000-0000-000000000001', 'test-key')"))
                         .isInstanceOf(SQLException.class);
         }
     }
@@ -95,7 +100,7 @@ class OwnerMigrationsIT {
                 .defaultSchema(schema)
                 .locations("filesystem:../relayforge-" + (owner.equals("delivery") ? "delivery-api" : owner) + "/src/main/resources/db/migration")
                 .load();
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(1);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(owner.equals("control-plane") ? 2 : 1);
         assertThat(flyway.migrate().migrationsExecuted).isZero();
     }
 
