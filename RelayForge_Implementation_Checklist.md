@@ -119,15 +119,17 @@ Adapt service names to the actual `compose.yaml`; keep equivalent commands in th
 
 ### A3. Organization provisioning and API keys
 
-- [ ] Implement protected `POST /v1/organizations` for trusted provisioning only; create `organizations` with plan and `quota_config` defaults/explicit overrides.
-- [ ] Issue a high-entropy API key; persist `key_id`, organization ID, scopes, timestamps, revocation/expiry fields, and only a secure hash/digest of the secret in `api_keys`.
-- [ ] Return the plaintext key once. Never expose the stored hash or return the secret on later reads.
-- [ ] Implement authentication middleware: resolve key ID, verify secret in constant time, enforce revocation/expiry/scope, update `last_used_at` safely, and establish the authenticated organization context.
-- [ ] Implement `POST /v1/users` for trusted provisioning with existing `organization_id`, email, display name, and metadata. Enforce `UNIQUE (organization_id, email)`.
-- [ ] Add key rotation/revocation behavior and an audit record for provisioning/security-sensitive changes.
+- [x] Implement protected `POST /v1/organizations` for trusted provisioning only; create `organizations` with plan and `quota_config` defaults/explicit overrides.
+- [x] Issue a high-entropy API key; persist `key_id`, organization ID, scopes, timestamps, revocation/expiry fields, and only a secure hash/digest of the secret in `api_keys`.
+- [x] Return the plaintext key once. Never expose the stored hash or return the secret on later reads.
+- [x] Implement authentication middleware: resolve key ID, verify secret in constant time, enforce revocation/expiry/scope, update `last_used_at` safely, and establish the authenticated organization context.
+- [x] Implement `POST /v1/users` for trusted provisioning with existing `organization_id`, email, display name, and metadata. Enforce `UNIQUE (organization_id, email)`.
+- [x] Add key rotation/revocation behavior and an audit record for provisioning/security-sensitive changes.
 
 **Touches:** `organizations`, `api_keys`, `users`, `audit_records`; `OrganizationController`, API-key filter/provider, provisioning authorization. APIs: `POST /v1/organizations`, `POST /v1/users` plus internal/admin key revocation route if exposed.  
 **Checkpoint A3:** Provision organization → receive key once → call a protected test endpoint successfully → wrong key gets `401` → revoked/expired key gets `401` → insufficient scope gets `403` → organization A cannot read organization B data. Verify database contains no plaintext key.
+
+**A3 verification:** [PR #11 CI](https://github.com/AbhishekKhot/RelayForge/actions/runs/40851999214) passed Java 21 `mvn verify` and `scripts/verify-compose.sh`. PostgreSQL integration tests cover trusted provisioning, key digest storage and one-time response, scope and expiry enforcement, rotation/revocation and audit, user uniqueness, quota validation, organization isolation, and safe recovery after an uncertain provisioning response. Control-plane authentication currently guards its own `/v1` routes; authentication at other service boundaries is implemented with their later API milestones.
 
 ## 4. Milestone B — Endpoint registration and subscription routing config
 
