@@ -1,0 +1,379 @@
+name: relayforge
+
+x-app: &app
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "java", "-cp", "/app", "HealthProbe", "http://127.0.0.1:8080/health/ready"]
+    interval: 10s
+    timeout: 8s
+    start_period: 40s
+    retries: 6
+
+x-control-db-env: &control-db-env
+  RELAYFORGE_DATABASE_URL: ${CONTROL_JDBC_URL:?Set CONTROL_JDBC_URL in .env}
+  RELAYFORGE_DATABASE_USERNAME: ${CONTROL_DB_USER:?Set CONTROL_DB_USER in .env}
+  RELAYFORGE_DATABASE_PASSWORD: ${CONTROL_DB_PASSWORD:?Set CONTROL_DB_PASSWORD in .env}
+  RELAYFORGE_READINESS_POSTGRES: "true"
+
+x-ingestion-db-env: &ingestion-db-env
+  RELAYFORGE_DATABASE_URL: ${INGESTION_JDBC_URL:?Set INGESTION_JDBC_URL in .env}
+  RELAYFORGE_DATABASE_USERNAME: ${INGESTION_DB_USER:?Set INGESTION_DB_USER in .env}
+  RELAYFORGE_DATABASE_PASSWORD: ${INGESTION_DB_PASSWORD:?Set INGESTION_DB_PASSWORD in .env}
+  RELAYFORGE_READINESS_POSTGRES: "true"
+
+x-delivery-db-env: &delivery-db-env
+  RELAYFORGE_DATABASE_URL: ${DELIVERY_JDBC_URL:?Set DELIVERY_JDBC_URL in .env}
+  RELAYFORGE_DATABASE_USERNAME: ${DELIVERY_DB_USER:?Set DELIVERY_DB_USER in .env}
+  RELAYFORGE_DATABASE_PASSWORD: ${DELIVERY_DB_PASSWORD:?Set DELIVERY_DB_PASSWORD in .env}
+  RELAYFORGE_READINESS_POSTGRES: "true"
+
+x-kafka-env: &kafka-env
+  RELAYFORGE_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:?Set KAFKA_BOOTSTRAP_SERVERS in .env}
+  RELAYFORGE_READINESS_KAFKA: "true"
+
+x-clickhouse-env: &clickhouse-env
+  RELAYFORGE_CLICKHOUSE_URL: ${CLICKHOUSE_URL:?Set CLICKHOUSE_URL in .env}
+  RELAYFORGE_CLICKHOUSE_USERNAME: ${CLICKHOUSE_USER:?Set CLICKHOUSE_USER in .env}
+  RELAYFORGE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?Set CLICKHOUSE_PASSWORD in .env}
+  RELAYFORGE_READINESS_CLICKHOUSE: "true"
+
+x-test: &test
+  image: ${CURL_IMAGE:?Set CURL_IMAGE in .env}
+  profiles: [tests]
+  restart: "no"
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:?Set POSTGRES_IMAGE in .env}
+    environment:
+      POSTGRES_USER: ${POSTGRES_SUPERUSER_USER:?Set POSTGRES_SUPERUSER_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?Set POSTGRES_SUPERUSER_PASSWORD in .env}
+      POSTGRES_DB: postgres
+      CONTROL_DB_USER: ${CONTROL_DB_USER:?Set CONTROL_DB_USER in .env}
+      CONTROL_DB_PASSWORD: ${CONTROL_DB_PASSWORD:?Set CONTROL_DB_PASSWORD in .env}
+      INGESTION_DB_USER: ${INGESTION_DB_USER:?Set INGESTION_DB_USER in .env}
+      INGESTION_DB_PASSWORD: ${INGESTION_DB_PASSWORD:?Set INGESTION_DB_PASSWORD in .env}
+      DELIVERY_DB_USER: ${DELIVERY_DB_USER:?Set DELIVERY_DB_USER in .env}
+      DELIVERY_DB_PASSWORD: ${DELIVERY_DB_PASSWORD:?Set DELIVERY_DB_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:?Set POSTGRES_HOST_PORT in .env}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deploy/postgres/01-create-databases.sh:/docker-entrypoint-initdb.d/01-create-databases.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "PGPASSWORD=\"$${POSTGRES_PASSWORD}\" psql -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\" -tAc 'SELECT 1' | grep -qx 1"]
+      interval: 5s
+      timeout: 5s
+      start_period: 20s
+      retries: 12
+    restart: unless-stopped
+
+  kafka:
+    image: ${KAFKA_IMAGE:?Set KAFKA_IMAGE in .env}
+    environment:
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID:?Set KAFKA_CLUSTER_ID in .env}
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093,EXTERNAL://:19092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://${KAFKA_EXTERNAL_HOST:?Set KAFKA_EXTERNAL_HOST in .env}:${KAFKA_HOST_PORT:?Set KAFKA_HOST_PORT in .env}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    ports:
+      - "127.0.0.1:${KAFKA_HOST_PORT:?Set KAFKA_HOST_PORT in .env}:19092"
+    volumes:
+      - kafka-data:/tmp/kraft-combined-logs
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      start_period: 30s
+      retries: 12
+    restart: unless-stopped
+
+  kafka-init:
+    image: ${KAFKA_IMAGE:?Set KAFKA_IMAGE in .env}
+    entrypoint: ["/bin/bash", "/opt/relayforge/create-topics.sh"]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:?Set KAFKA_BOOTSTRAP_SERVERS in .env}
+    volumes:
+      - ./deploy/kafka/create-topics.sh:/opt/relayforge/create-topics.sh:ro
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: "no"
+
+  redis:
+    image: ${REDIS_IMAGE:?Set REDIS_IMAGE in .env}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD}\" redis-cli ping | grep -qx PONG"]
+      interval: 5s
+      timeout: 3s
+      start_period: 10s
+      retries: 12
+    restart: unless-stopped
+
+  clickhouse:
+    image: ${CLICKHOUSE_IMAGE:?Set CLICKHOUSE_IMAGE in .env}
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:?Set CLICKHOUSE_DB in .env}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:?Set CLICKHOUSE_USER in .env}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?Set CLICKHOUSE_PASSWORD in .env}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ports:
+      - "127.0.0.1:${CLICKHOUSE_HOST_PORT:?Set CLICKHOUSE_HOST_PORT in .env}:8123"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./deploy/clickhouse/01-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user \"$${CLICKHOUSE_USER}\" --password \"$${CLICKHOUSE_PASSWORD}\" --query 'SELECT 1' | grep -qx 1"]
+      interval: 10s
+      timeout: 8s
+      start_period: 30s
+      retries: 12
+    restart: unless-stopped
+
+  webhook-simulator:
+    image: ${WEBHOOK_SIMULATOR_IMAGE:?Set WEBHOOK_SIMULATOR_IMAGE in .env}
+    volumes:
+      - ./deploy/wiremock/mappings:/home/wiremock/mappings:ro
+    ports:
+      - "127.0.0.1:${WEBHOOK_SIMULATOR_HOST_PORT:?Set WEBHOOK_SIMULATOR_HOST_PORT in .env}:8080"
+    restart: unless-stopped
+
+  control-plane:
+    <<: *app
+    image: relayforge/control-plane:local
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.service
+      args: { MODULE: relayforge-control-plane }
+    environment:
+      <<: *control-db-env
+      SPRING_FLYWAY_URL: ${CONTROL_JDBC_URL:?Set CONTROL_JDBC_URL in .env}
+      SPRING_FLYWAY_USER: ${CONTROL_DB_USER:?Set CONTROL_DB_USER in .env}
+      SPRING_FLYWAY_PASSWORD: ${CONTROL_DB_PASSWORD:?Set CONTROL_DB_PASSWORD in .env}
+      RELAYFORGE_PROVISIONING_CREDENTIAL: ${TRUSTED_PROVISIONING_CREDENTIAL:?Set TRUSTED_PROVISIONING_CREDENTIAL in .env}
+    ports:
+      - "127.0.0.1:${CONTROL_API_HOST_PORT:?Set CONTROL_API_HOST_PORT in .env}:8080"
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  control-publisher:
+    <<: *app
+    image: relayforge/control-publisher:local
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.service
+      args: { MODULE: relayforge-control-publisher }
+    environment:
+      <<: [*control-db-env, *kafka-env]
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka-init: { condition: service_completed_successfully }
+
+  ingestion:
+    <<: *app
+    image: relayforge/ingestion:local
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.service
+      args: { MODULE: relayforge-ingestion }
+    environment:
+      <<: *ingestion-db-env
+      SPRING_FLYWAY_URL: ${INGESTION_JDBC_URL:?Set INGESTION_JDBC_URL in .env}
+      SPRING_FLYWAY_USER: ${INGESTION_DB_USER:?Set INGESTION_DB_USER in .env}
+      SPRING_FLYWAY_PASSWORD: ${INGESTION_DB_PASSWORD:?Set INGESTION_DB_PASSWORD in .env}
+      RELAYFORGE_REDIS_URI: ${REDIS_URI:?Set REDIS_URI in .env}
+      RELAYFORGE_REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${INGESTION_API_HOST_PORT:?Set INGESTION_API_HOST_PORT in .env}:8080"
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  ingestion-publisher:
+    <<: *app
+    image: relayforge/ingestion-publisher:local
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.service
+      args: { MODULE: relayforge-ingestion-publisher }
+    environment:
+      <<: [*ingestion-db-env, *kafka-env]
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka-init: { condition: service_completed_successfully }
+
+  router:
+    <<: *app
+    image: relayforge/router:local
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.service
+      args: { MODULE: relayforge-router }
+    environment:
+      <<: [*delivery-db-env, *kafka-env]
+      RELAYFORGE_INGESTION_INTERNAL_URL: ${INGESTION_INTERNAL_URL:?Set INGESTION_INTERNAL_URL in .env}
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka-init: { condition: service_completed_successfully }
+      ingestion: { condition: service_healthy }
+
+  delivery-api:
+    <<: *app
+    image: relayforge/delivery-api:local
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.service
+      args: { MODULE: relayforge-delivery-api }
+    environment:
+      <<: *delivery-db-env
+      SPRING_FLYWAY_URL: ${DELIVERY_JDBC_URL:?Set DELIVERY_JDBC_URL in .env}
+      SPRING_FLYWAY_USER: ${DELIVERY_DB_USER:?Set DELIVERY_DB_USER in .env}
+      SPRING_FLYWAY_PASSWORD: ${DELIVERY_DB_PASSWORD:?Set DELIVERY_DB_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${DELIVERY_API_HOST_PORT:?Set DELIVERY_API_HOST_PORT in .env}:8080"
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  delivery-worker:
+    <<: *app
+    image: relayforge/delivery-worker:local
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.service
+      args: { MODULE: relayforge-delivery-worker }
+    environment:
+      <<: [*delivery-db-env, *kafka-env]
+      RELAYFORGE_REDIS_URI: ${REDIS_URI:?Set REDIS_URI in .env}
+      RELAYFORGE_REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+      RELAYFORGE_WEBHOOK_SIMULATOR_URL: ${WEBHOOK_SIMULATOR_URL:?Set WEBHOOK_SIMULATOR_URL in .env}
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka-init: { condition: service_completed_successfully }
+      webhook-simulator: { condition: service_healthy }
+
+  delivery-publisher:
+    <<: *app
+    image: relayforge/delivery-publisher:local
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.service
+      args: { MODULE: relayforge-delivery-publisher }
+    environment:
+      <<: [*delivery-db-env, *kafka-env]
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka-init: { condition: service_completed_successfully }
+
+  retry-scheduler:
+    <<: *app
+    image: relayforge/retry-scheduler:local
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.service
+      args: { MODULE: relayforge-retry-scheduler }
+    environment:
+      <<: *delivery-db-env
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  analytics-consumer:
+    <<: *app
+    image: relayforge/analytics-consumer:local
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.service
+      args: { MODULE: relayforge-analytics-consumer }
+    environment:
+      <<: [*clickhouse-env, *kafka-env]
+    depends_on:
+      clickhouse: { condition: service_healthy }
+      kafka-init: { condition: service_completed_successfully }
+
+  analytics-api:
+    <<: *app
+    image: relayforge/analytics-api:local
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.service
+      args: { MODULE: relayforge-analytics-api }
+    environment:
+      <<: *clickhouse-env
+    ports:
+      - "127.0.0.1:${ANALYTICS_API_HOST_PORT:?Set ANALYTICS_API_HOST_PORT in .env}:8080"
+    depends_on:
+      clickhouse: { condition: service_healthy }
+
+  test-control-plane:
+    <<: *test
+    command: ["-fsS", "http://control-plane:8080/health/ready"]
+    depends_on: { control-plane: { condition: service_healthy } }
+
+  test-control-publisher:
+    <<: *test
+    command: ["-fsS", "http://control-publisher:8080/health/ready"]
+    depends_on: { control-publisher: { condition: service_healthy } }
+
+  test-ingestion:
+    <<: *test
+    command: ["-fsS", "http://ingestion:8080/health/ready"]
+    depends_on: { ingestion: { condition: service_healthy } }
+
+  test-ingestion-publisher:
+    <<: *test
+    command: ["-fsS", "http://ingestion-publisher:8080/health/ready"]
+    depends_on: { ingestion-publisher: { condition: service_healthy } }
+
+  test-router:
+    <<: *test
+    command: ["-fsS", "http://router:8080/health/ready"]
+    depends_on: { router: { condition: service_healthy } }
+
+  test-delivery-api:
+    <<: *test
+    command: ["-fsS", "http://delivery-api:8080/health/ready"]
+    depends_on: { delivery-api: { condition: service_healthy } }
+
+  test-delivery-worker:
+    <<: *test
+    command: ["-fsS", "http://delivery-worker:8080/health/ready"]
+    depends_on: { delivery-worker: { condition: service_healthy } }
+
+  test-delivery-publisher:
+    <<: *test
+    command: ["-fsS", "http://delivery-publisher:8080/health/ready"]
+    depends_on: { delivery-publisher: { condition: service_healthy } }
+
+  test-retry-scheduler:
+    <<: *test
+    command: ["-fsS", "http://retry-scheduler:8080/health/ready"]
+    depends_on: { retry-scheduler: { condition: service_healthy } }
+
+  test-analytics-consumer:
+    <<: *test
+    command: ["-fsS", "http://analytics-consumer:8080/health/ready"]
+    depends_on: { analytics-consumer: { condition: service_healthy } }
+
+  test-analytics-api:
+    <<: *test
+    command: ["-fsS", "http://analytics-api:8080/health/ready"]
+    depends_on: { analytics-api: { condition: service_healthy } }
+
+volumes:
+  postgres-data:
+  kafka-data:
+  redis-data:
+  clickhouse-data:

@@ -2,7 +2,7 @@
 
 RelayForge accepts customer events and delivers them as webhooks to registered endpoints. Customers configure accounts, API keys, endpoints, and subscriptions; producers submit events with an idempotency key. RelayForge durably accepts each event before routing it to matching endpoints, retrying eligible failures, and recording delivery history and analytics.
 
-The repository has runnable Spring Boot role scaffolds and a shared image build. Business endpoints, database migrations, Compose, and end-to-end tests are still implementation tasks. Follow the [implementation checklist](RelayForge_Implementation_Checklist.md) for the build sequence.
+The repository has runnable Spring Boot role scaffolds, owner-specific database migrations, and a Docker Compose development stack. Business endpoints and end-to-end event delivery remain implementation tasks. Follow the [implementation checklist](RelayForge_Implementation_Checklist.md) for the build sequence.
 
 ## High-level design
 
@@ -23,7 +23,7 @@ The repository has runnable Spring Boot role scaffolds and a shared image build.
 | Kafka | Asynchronous event, delivery-work, and analytics-fact transport |
 | Redis | Short-lived quota, token-cache, and coordination state |
 | ClickHouse | Eventually consistent delivery analytics |
-| Docker Compose | Local functional and integration environment once implemented |
+| Docker Compose | Local functional and integration environment |
 
 PostgreSQL holds accepted events and active delivery state; Kafka messages may repeat, so consumers must be idempotent. The [HLD](RelayForge_High_Level_Design.md), [LLD](RelayForge_Low_Level_Design.md), [physical schema plan](docs/schema/README.md), and [image matrix](deploy/README.md) contain the detailed contracts.
 
@@ -50,11 +50,28 @@ mvn validate
 mvn test
 ```
 
-`mvn validate` checks the reactor layout and Java Checkstyle rules; `.editorconfig` defines four-space indentation. `mvn test` runs the bootstrap and PostgreSQL 17.11 Testcontainers migration tests, so Docker must be running. Each deployable module has a Spring Boot entry point. To run the control-plane bootstrap locally, use `mvn package` followed by `java -jar relayforge-control-plane/target/relayforge-control-plane-0.1.0-SNAPSHOT.jar`, then inspect `http://localhost:8080/health/live`. Database clients for application queries and dependency-backed readiness belong to later checkpoints; readiness currently reflects process startup only.
+`mvn validate` checks the reactor layout and Java Checkstyle rules; `.editorconfig` defines four-space indentation. `mvn test` runs the bootstrap and PostgreSQL 17.11 Testcontainers migration tests, so Docker must be running. Each deployable module has a Spring Boot entry point. To run the control-plane bootstrap locally, use `mvn package` followed by `java -jar relayforge-control-plane/target/relayforge-control-plane-0.1.0-SNAPSHOT.jar`, then inspect `http://localhost:8080/health/live`. In Compose, `/health/ready` checks each role's required PostgreSQL, Kafka, or ClickHouse dependency.
 
 The control-plane, ingestion, and delivery-api images apply their own Flyway migration at startup when `SPRING_FLYWAY_URL`, `SPRING_FLYWAY_USER`, and `SPRING_FLYWAY_PASSWORD` are set. Point each role at a separate PostgreSQL 17 database; ingestion and delivery use one database per shard. Bootstrap creates yesterday, today, and seven future UTC-day partitions. The migration tests verify a second apply leaves the schema history unchanged, and exercise local uniqueness, ownership, and partition boundaries. See [schema ownership and retention](docs/schema/README.md) for the remaining operational jobs.
 
-Build a role image with `docker build -f deploy/Dockerfile.service --build-arg MODULE=relayforge-control-plane -t relayforge/control-plane:dev .`. Replace the module and image name for another role. `compose.yaml` and dependency-backed readiness belong to the D0 checkpoint after A2; `docker compose up` is not supported yet. The [checklist](RelayForge_Implementation_Checklist.md) tracks that gate.
+Build a role image with `docker build -f deploy/Dockerfile.service --build-arg MODULE=relayforge-control-plane -t relayforge/control-plane:local .`. Replace the module and image name for another role.
+
+### Docker development stack
+
+Create a local `.env` with generated credentials before starting Compose. The file is ignored by Git; `.env.example` holds image versions, internal URLs, ports, and credential placeholders. Keep local credentials in `.env` and use an external secret manager for production.
+
+```bash
+python3 scripts/create-env.py
+docker compose up -d --build
+docker compose ps
+docker compose run --rm test-ingestion
+docker compose logs -f control-publisher router delivery-worker
+docker compose down
+```
+
+The generator creates `.env` with owner-only permissions and refuses to replace an existing file. The four REST ports are `18080` (control), `18081` (ingestion), `18082` (delivery), and `18083` (analytics); the webhook simulator is `18084`. PostgreSQL, Kafka, and ClickHouse bind to `127.0.0.1` on ports `15432`, `19092`, and `18123`. These values can be changed in `.env`. The database name, user, password, JDBC URL, broker address, and other connection settings are read from that file. There are no public application APIs yet; `GET /health/live` and `GET /health/ready` are the available HTTP examples.
+
+Run `scripts/verify-compose.sh` for the clean boot checkpoint, dependency failure checks, and restart persistence check. It leaves the stack running. `docker compose down` stops it and retains named volumes. For disposable local data only, `docker compose down -v` deletes the PostgreSQL, Kafka, Redis, and ClickHouse volumes.
 
 ## Navigate the codebase
 

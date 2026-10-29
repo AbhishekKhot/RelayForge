@@ -19,15 +19,9 @@ jobs:
           cache: maven
       - name: Test and package
         run: mvn -B verify
-      - name: Build role images
+      - name: Create local Docker environment
+        run: python3 scripts/create-env.py
+      - name: Verify clean Compose boot and recovery
         run: |
-          for module in relayforge-control-plane relayforge-control-publisher relayforge-ingestion relayforge-ingestion-publisher relayforge-router relayforge-delivery-api relayforge-delivery-worker relayforge-delivery-publisher relayforge-retry-scheduler relayforge-analytics-consumer relayforge-analytics-api; do
-            docker build -f deploy/Dockerfile.service --build-arg MODULE="$module" -t "$module:ci" .
-          done
-      - name: Smoke test control-plane image
-        run: |
-          docker run -d --rm --name relayforge-bootstrap -p 18080:8080 relayforge-control-plane:ci
-          trap 'docker logs relayforge-bootstrap || true; docker stop relayforge-bootstrap' EXIT
-          curl --fail --silent --show-error --retry 30 --retry-delay 1 --retry-all-errors -H 'X-Request-Id: ci-smoke' -D headers.txt -o response.json http://localhost:18080/health/ready
-          grep -qi '^X-Request-Id: ci-smoke' headers.txt
-          grep -q '"status":"UP"' response.json
+          chmod +x scripts/verify-compose.sh
+          scripts/verify-compose.sh
