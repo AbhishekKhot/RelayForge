@@ -1,0 +1,4 @@
+{
+  "request": { "method": "POST", "url": "/status/429" },
+  "response": { "status": 429, "headers": { "Retry-After": "2" }, "body": "rate limited" }
+}

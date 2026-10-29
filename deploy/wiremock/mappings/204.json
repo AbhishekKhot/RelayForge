@@ -1,0 +1,4 @@
+{
+  "request": { "method": "POST", "url": "/status/204" },
+  "response": { "status": 204 }
+}
