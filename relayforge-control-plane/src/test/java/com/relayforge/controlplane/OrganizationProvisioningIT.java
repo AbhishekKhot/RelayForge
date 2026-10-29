@@ -41,6 +41,7 @@ class OrganizationProvisioningIT {
         registry.add("relayforge.database.username", DATABASE::getUsername);
         registry.add("relayforge.database.password", DATABASE::getPassword);
         registry.add("relayforge.provisioning.credential", () -> PROVISIONING_CREDENTIAL);
+        registry.add("relayforge.security.api-key-hmac-key", () -> "0123456789abcdef".repeat(4));
     }
 
     @Autowired
