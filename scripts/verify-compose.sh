@@ -3,6 +3,12 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+show_startup_failure() {
+    docker compose ps >&2
+    docker compose logs --tail=120 kafka >&2
+}
+trap show_startup_failure ERR
+
 if [[ ! -f .env ]]; then
     echo "Create .env with python3 scripts/create-env.py before verification" >&2
     exit 1
