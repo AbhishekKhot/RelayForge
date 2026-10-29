@@ -1,0 +1,4 @@
+{
+  "request": { "method": "POST", "url": "/timeout" },
+  "response": { "status": 200, "fixedDelayMilliseconds": 60000, "body": "late" }
+}
