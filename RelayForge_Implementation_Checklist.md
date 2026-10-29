@@ -36,19 +36,19 @@
 
 ### 2.1 Expected Compose services
 
-- [ ] `postgres`: PostgreSQL 17 with separate control, ingestion, and delivery databases; health check waits for successful SQL connection.
-- [ ] `kafka` and its required local dependency/configuration: topics for configuration changes, accepted events, ready deliveries, and analytics facts.
-- [ ] `redis`: quota/token-cache coordination; app behavior remains bounded if Redis is stopped.
-- [ ] `clickhouse`: analytics database and `relayforge_analytics.delivery_facts` table.
-- [ ] `control-plane` and `ingestion`: independently runnable REST applications.
-- [ ] `control-publisher`, `ingestion-publisher`, and `delivery-publisher`: publish their owner's outbox rows.
-- [ ] `router`: consumes accepted events and creates logical deliveries.
-- [ ] `delivery-api`: serves organization-scoped delivery queries and replay.
-- [ ] `delivery-worker`: claims due deliveries, calls webhook receivers, and records outcomes.
-- [ ] `retry-scheduler`: scans due retry work and recovers expired leases.
-- [ ] `analytics-consumer`: inserts analytics facts into ClickHouse before committing Kafka offsets.
-- [ ] `analytics-api`: serves bounded analytics queries.
-- [ ] `webhook-simulator`: controllable local endpoints for 2xx, 4xx, 429, 5xx, delay, timeout, and connection reset tests.
+- [x] `postgres`: PostgreSQL 17 with separate control, ingestion, and delivery databases; health check waits for successful SQL connection.
+- [x] `kafka` and its required local dependency/configuration: topics for configuration changes, accepted events, ready deliveries, and analytics facts.
+- [x] `redis`: local quota/token-cache service; bounded application behavior during an outage remains with later Redis-using features.
+- [x] `clickhouse`: analytics database and `relayforge_analytics.delivery_facts` table.
+- [x] `control-plane` and `ingestion`: independently runnable REST application scaffolds; business endpoints remain in later milestones.
+- [x] `control-publisher`, `ingestion-publisher`, and `delivery-publisher`: independently runnable outbox publisher scaffolds; publish behavior remains in D1.
+- [x] `router`: independently runnable router scaffold; routing behavior remains in D3.
+- [x] `delivery-api`: independently runnable API scaffold; query and replay behavior remains in E3/F3.
+- [x] `delivery-worker`: independently runnable worker scaffold; lease and webhook behavior remains in E1/E2.
+- [x] `retry-scheduler`: independently runnable scheduler scaffold; retry behavior remains in F1.
+- [x] `analytics-consumer`: independently runnable consumer scaffold; insert behavior remains in H1.
+- [x] `analytics-api`: independently runnable API scaffold; bounded query behavior remains in H3.
+- [x] `webhook-simulator`: local endpoints for 2xx, 4xx, 429, 5xx, delay, timeout, and connection reset tests.
 
 Each role has a separate image and test target. Services in one ownership boundary may share source libraries, but their runtime images and replica counts are independent.
 
@@ -82,12 +82,14 @@ Adapt service names to the actual `compose.yaml`; keep equivalent commands in th
    "SHOW TABLES FROM relayforge_analytics"
 ```
 
-- [ ] Commit `.env.example` with safe local defaults and no real secrets.
-- [ ] Add readiness checks for dependencies; `depends_on` alone is not a readiness guarantee.
-- [ ] Add a documented reset command for disposable local data. Clearly warn that it deletes local volumes.
-- [ ] Document ports, service names, test credentials/bootstrap procedure, and API examples in `README.md`.
+- [x] Commit `.env.example` with safe local defaults and no real secrets.
+- [x] Add readiness checks for dependencies; `depends_on` alone is not a readiness guarantee.
+- [x] Add a documented reset command for disposable local data. Clearly warn that it deletes local volumes.
+- [x] Document ports, service names, test credentials/bootstrap procedure, and available health API examples in `README.md`.
 
 **Checkpoint D0 — Clean boot (after A2):** Once the application bootstrap and owner migrations exist, `docker compose up -d --build` succeeds from a clean checkout; all required services become healthy; migrations run once; `/health/live` returns `200`; `/health/ready` returns `200` only when required dependencies are available. Restarting the stack does not lose committed PostgreSQL data.
+
+**D0 verification:** [PR #10 CI](https://github.com/AbhishekKhot/RelayForge/actions/runs/40835097981) passed Java 21 `mvn verify` and `scripts/verify-compose.sh` on a clean Docker runner. The script builds all role images, checks service health, topics, ClickHouse schema, three owner Flyway histories, every role's readiness target, dependency outage responses, and committed PostgreSQL data after a stack restart. The same Docker acceptance could not run on the local machine because its Docker daemon was unavailable.
 
 ## 3. Milestone A — Project skeleton, database, and identity
 
