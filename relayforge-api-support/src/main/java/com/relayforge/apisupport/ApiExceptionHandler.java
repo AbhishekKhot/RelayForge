@@ -7,17 +7,20 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.NoHandlerFoundException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 @RestControllerAdvice
 public final class ApiExceptionHandler {
     @ExceptionHandler({MethodArgumentNotValidException.class, ConstraintViolationException.class,
-            HandlerMethodValidationException.class, HttpMessageNotReadableException.class})
+            HandlerMethodValidationException.class, HttpMessageNotReadableException.class,
+            MissingRequestHeaderException.class, MethodArgumentTypeMismatchException.class})
     public ResponseEntity<ApiError> invalidRequest(Exception exception, HttpServletRequest request) {
         return ResponseEntity.badRequest().body(new ApiError("VALIDATION_ERROR", "Invalid request", RequestIdFilter.current(request)));
     }

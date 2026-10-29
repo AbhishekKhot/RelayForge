@@ -37,11 +37,15 @@ verify_migrations() {
     local database
     local count
     for database in relayforge_control relayforge_ingestion relayforge_delivery; do
+        local expected=1
+        if [[ "$database" == relayforge_control ]]; then
+            expected=2
+        fi
         count="$(docker compose exec -T postgres sh -c \
             'psql -U "$POSTGRES_USER" -d "$1" -At -c "SELECT count(*) FROM flyway_schema_history WHERE version IS NOT NULL AND success"' \
             sh "$database")"
-        if [[ "$count" != 1 ]]; then
-            echo "$database has $count successful versioned migrations; expected 1" >&2
+        if [[ "$count" != "$expected" ]]; then
+            echo "$database has $count successful versioned migrations; expected $expected" >&2
             exit 1
         fi
     done
