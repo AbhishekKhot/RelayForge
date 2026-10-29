@@ -83,6 +83,7 @@ CREATE TABLE deliveries (
     completed_at timestamptz,
     version bigint NOT NULL DEFAULT 1,
     PRIMARY KEY (accepted_day, id),
+    UNIQUE (accepted_day, id, organization_id),
     UNIQUE (accepted_day, event_id, endpoint_id, generation),
     FOREIGN KEY (accepted_day, event_id, organization_id) REFERENCES routing_progress(accepted_day, event_id, organization_id)
 ) PARTITION BY RANGE (accepted_day);
@@ -103,7 +104,7 @@ CREATE TABLE delivery_work (
     lease_expires_at timestamptz,
     claim_count integer NOT NULL DEFAULT 0 CHECK (claim_count >= 0),
     updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    FOREIGN KEY (accepted_day, delivery_id) REFERENCES deliveries(accepted_day, id)
+    FOREIGN KEY (accepted_day, delivery_id, organization_id) REFERENCES deliveries(accepted_day, id, organization_id)
 );
 CREATE INDEX delivery_work_due_idx ON delivery_work (status, next_attempt_at, delivery_id) WHERE status IN ('PENDING', 'ENQUEUED', 'RETRY_SCHEDULED');
 CREATE INDEX delivery_work_lease_idx ON delivery_work (lease_expires_at) WHERE status = 'IN_PROGRESS';
@@ -112,6 +113,7 @@ CREATE INDEX delivery_work_cohort_idx ON delivery_work (accepted_day);
 CREATE TABLE delivery_attempts (
     accepted_day date NOT NULL,
     id uuid NOT NULL DEFAULT gen_random_uuid(),
+    organization_id uuid NOT NULL,
     delivery_id uuid NOT NULL,
     attempt_number integer NOT NULL CHECK (attempt_number > 0),
     started_at timestamptz NOT NULL,
@@ -125,12 +127,13 @@ CREATE TABLE delivery_attempts (
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (accepted_day, id),
     UNIQUE (accepted_day, delivery_id, attempt_number),
-    FOREIGN KEY (accepted_day, delivery_id) REFERENCES deliveries(accepted_day, id)
+    FOREIGN KEY (accepted_day, delivery_id, organization_id) REFERENCES deliveries(accepted_day, id, organization_id)
 ) PARTITION BY RANGE (accepted_day);
 
 CREATE TABLE authentication_attempts (
     accepted_day date NOT NULL,
     id uuid NOT NULL DEFAULT gen_random_uuid(),
+    organization_id uuid NOT NULL,
     endpoint_id uuid NOT NULL,
     delivery_id uuid NOT NULL,
     attempt_number integer NOT NULL CHECK (attempt_number > 0),
@@ -143,7 +146,7 @@ CREATE TABLE authentication_attempts (
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (accepted_day, id),
     UNIQUE (accepted_day, delivery_id, attempt_number),
-    FOREIGN KEY (accepted_day, delivery_id) REFERENCES deliveries(accepted_day, id)
+    FOREIGN KEY (accepted_day, delivery_id, organization_id) REFERENCES deliveries(accepted_day, id, organization_id)
 ) PARTITION BY RANGE (accepted_day);
 CREATE INDEX authentication_attempts_delivery_idx ON authentication_attempts (accepted_day, delivery_id, started_at DESC);
 
@@ -161,8 +164,8 @@ CREATE TABLE replay_requests (
     PRIMARY KEY (accepted_day, id),
     UNIQUE (accepted_day, replay_delivery_id),
     UNIQUE (accepted_day, original_delivery_id, replay_key),
-    FOREIGN KEY (accepted_day, original_delivery_id) REFERENCES deliveries(accepted_day, id),
-    FOREIGN KEY (accepted_day, replay_delivery_id) REFERENCES deliveries(accepted_day, id)
+    FOREIGN KEY (accepted_day, original_delivery_id, organization_id) REFERENCES deliveries(accepted_day, id, organization_id),
+    FOREIGN KEY (accepted_day, replay_delivery_id, organization_id) REFERENCES deliveries(accepted_day, id, organization_id)
 ) PARTITION BY RANGE (accepted_day);
 
 CREATE TABLE delivery_audit_records (
@@ -176,7 +179,7 @@ CREATE TABLE delivery_audit_records (
     details jsonb NOT NULL DEFAULT '{}'::jsonb,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (accepted_day, id),
-    FOREIGN KEY (accepted_day, delivery_id) REFERENCES deliveries(accepted_day, id)
+    FOREIGN KEY (accepted_day, delivery_id, organization_id) REFERENCES deliveries(accepted_day, id, organization_id)
 ) PARTITION BY RANGE (accepted_day);
 
 CREATE TABLE delivery_outbox (
