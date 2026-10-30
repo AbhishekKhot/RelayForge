@@ -38,7 +38,9 @@ verify_migrations() {
     local count
     for database in relayforge_control relayforge_ingestion relayforge_delivery; do
         local expected=1
-        if [[ "$database" == relayforge_control || "$database" == relayforge_ingestion ]]; then
+        if [[ "$database" == relayforge_control ]]; then
+            expected=3
+        elif [[ "$database" == relayforge_ingestion ]]; then
             expected=2
         fi
         count="$(docker compose exec -T postgres sh -c \
@@ -65,6 +67,7 @@ for service in "${services[@]}"; do
 done
 verify_migrations
 python3 scripts/verify-b1.py
+python3 scripts/verify-b2.py
 
 docker compose exec -T postgres sh -c \
     'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 \

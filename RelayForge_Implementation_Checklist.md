@@ -147,13 +147,15 @@ Adapt service names to the actual `compose.yaml`; keep equivalent commands in th
 
 ### B2. Authentication configuration and encryption
 
-- [ ] Implement allowlisted auth types: none, static API key/header, Bearer token, Basic auth, and declarative token exchange/client credentials per LLD.
-- [ ] Encrypt sensitive auth config and signing secrets with application-level envelope encryption or store a secret reference. Keep encryption keys outside source control; define local-only key injection and rotation procedure.
-- [ ] Validate token URL, method, content type, allowed request fields, token extraction JSONPath, expiry field, and credential references. No arbitrary scripts, templates, or event-payload interpolation.
-- [ ] Ensure DTOs and entity `toString()` methods never expose ciphertext, plaintext credentials, or token response bodies.
+- [x] Implement allowlisted auth types: none, static API key/header, Bearer token, Basic auth, and declarative token exchange/client credentials per LLD.
+- [x] Encrypt sensitive auth config and signing secrets with application-level envelope encryption or store a secret reference. Keep encryption keys outside source control; define local-only key injection and rotation procedure.
+- [x] Validate token URL, method, content type, allowed request fields, token extraction JSONPath, expiry field, and credential references. No arbitrary scripts, templates, or event-payload interpolation.
+- [x] Ensure DTOs and entity `toString()` methods never expose ciphertext, plaintext credentials, or token response bodies.
 
 **Touches:** `endpoints.auth_type`, `auth_config_ciphertext`, `auth_secret_ref`, `signing_secret_ciphertext`, endpoint auth services.  
 **Checkpoint B2:** Create endpoint with each supported static auth type; read endpoint back and verify secret material is redacted. A wrong/missing encryption key prevents startup or readiness rather than silently storing plaintext.
+
+**B2 verification:** [PR #13 CI](https://github.com/AbhishekKhot/RelayForge/actions/runs/41042893612) passed Java 21 `mvn verify` and Compose acceptance. Tests cover supported auth modes, token URL validation, encrypted secret storage and redaction, and startup rejection with a wrong or missing key.
 
 ### B3. Atomic endpoint + subscriptions registration
 
