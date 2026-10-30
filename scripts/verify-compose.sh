@@ -39,7 +39,7 @@ verify_migrations() {
     for database in relayforge_control relayforge_ingestion relayforge_delivery; do
         local expected=1
         if [[ "$database" == relayforge_control ]]; then
-            expected=2
+            expected=3
         fi
         count="$(docker compose exec -T postgres sh -c \
             'psql -U "$POSTGRES_USER" -d "$1" -At -c "SELECT count(*) FROM flyway_schema_history WHERE version IS NOT NULL AND success"' \
@@ -65,6 +65,7 @@ for service in "${services[@]}"; do
 done
 verify_migrations
 python3 scripts/verify-b1.py
+python3 scripts/verify-b2.py
 
 docker compose exec -T postgres sh -c \
     'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 \

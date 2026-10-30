@@ -3,6 +3,7 @@ package com.relayforge.controlplane;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.sql.DriverManager;
 import java.util.HashMap;
 import java.util.List;
@@ -65,6 +66,8 @@ class EndpointRegistrationIT {
         registry.add("relayforge.database.password", DATABASE::getPassword);
         registry.add("relayforge.provisioning.credential", () -> PROVISIONING_CREDENTIAL);
         registry.add("relayforge.security.api-key-hmac-key", () -> "0123456789abcdef".repeat(4));
+        registry.add("relayforge.encryption.local-keys", () -> "local-v1:" + "fedcba9876543210".repeat(4));
+        registry.add("relayforge.encryption.active-version", () -> "local-v1");
         registry.add("relayforge.ssrf.local-simulator-url",
                 () -> "http://localhost:" + SIMULATOR.getAddress().getPort());
     }
@@ -120,6 +123,73 @@ class EndpointRegistrationIT {
                 credentials.organizationId())).isZero();
     }
 
+    @Test
+    void encryptsSupportedAuthenticationAndReturnsOnlyRedactedConfiguration() throws Exception {
+        Credentials credentials = credentials();
+        List<Map<String, Object>> configurations = List.of(
+                Map.of("type", "STATIC_HEADER", "header_name", "X-Api-Key", "value", "static-secret"),
+                Map.of("type", "STATIC_API_KEY", "header_name", "X-Api-Key", "value", "static-secret"),
+                Map.of("type", "BEARER", "token", "bearer-secret"),
+                Map.of("type", "BASIC", "username", "customer", "password", "basic-secret"),
+                Map.of("type", "CLIENT_CREDENTIALS", "token_url", simulatorUrl() + "/token",
+                        "client_id", "client", "client_secret", "oauth-secret",
+                        "token_response", Map.of("access_token_path", "$.access_token",
+                                "token_type", "Bearer")),
+                Map.of("type", "TOKEN_EXCHANGE", "token_request", Map.of(
+                                "method", "POST", "url", simulatorUrl() + "/token",
+                                "headers", Map.of("Content-Type", "application/json"),
+                                "body_fields", Map.of("username", Map.of("source", "secret", "name", "username"))),
+                        "token_response", Map.of("access_token_path", "$.data.accessToken",
+                                "token_type", "Bearer"),
+                        "token_placement", Map.of("type", "HEADER", "name", "Authorization",
+                                "prefix", "Bearer "), "secrets", Map.of("username", "exchange-secret")));
+        for (Map<String, Object> configuration : configurations) {
+            Map<String, Object> body = new HashMap<>(request(simulatorUrl()));
+            body.put("authentication", configuration);
+            ResponseEntity<JsonNode> created = register(credentials.key(), body);
+            assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+            String id = created.getBody().path("data").path("endpoint_id").asText();
+            ResponseEntity<JsonNode> read = readEndpoint(credentials.key(), id);
+            assertThat(read.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(read.getBody().path("data").path("authentication").path("type").asText())
+                    .isEqualTo(configuration.get("type"));
+            assertThat(read.getBody().toString()).doesNotContain("secret", "ciphertext", "wrapped_dek");
+            try (var connection = DriverManager.getConnection(
+                    DATABASE.getJdbcUrl(), DATABASE.getUsername(), DATABASE.getPassword());
+                    var statement = connection.prepareStatement("""
+                            SELECT auth_type, auth_config_ciphertext, auth_wrapped_dek, auth_nonce
+                            FROM endpoints WHERE id = ? AND organization_id = ?
+                            """)) {
+                statement.setObject(1, UUID.fromString(id));
+                statement.setObject(2, credentials.organizationId());
+                try (var row = statement.executeQuery()) {
+                    assertThat(row.next()).isTrue();
+                    assertThat(row.getString(1)).isEqualTo(configuration.get("type"));
+                    assertThat(row.getBytes(2)).hasSizeGreaterThan(16);
+                    assertThat(row.getBytes(3)).hasSizeGreaterThan(16);
+                    assertThat(row.getBytes(4)).hasSize(12);
+                    assertThat(new String(row.getBytes(2), StandardCharsets.ISO_8859_1))
+                            .doesNotContain("secret");
+                }
+            }
+        }
+    }
+
+    @Test
+    void rejectsConflictingStaticHeaderAndNeverStoresSecret() throws Exception {
+        Credentials credentials = credentials();
+        Map<String, Object> body = new HashMap<>(request(simulatorUrl(), Map.of("X-Api-Key", "public"),
+                List.of("payment.completed"), 10000));
+        body.put("authentication", Map.of("type", "STATIC_HEADER", "header_name", "X-Api-Key",
+                "value", "private-secret"));
+
+        ResponseEntity<JsonNode> rejected = register(credentials.key(), body);
+        assertThat(rejected.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(rejected.getBody().toString()).doesNotContain("private-secret");
+        assertThat(count("SELECT count(*) FROM endpoints WHERE organization_id = ?",
+                credentials.organizationId())).isZero();
+    }
+
     private Credentials credentials() {
         HttpHeaders admin = new HttpHeaders();
         admin.setContentType(MediaType.APPLICATION_JSON);
@@ -131,7 +201,7 @@ class EndpointRegistrationIT {
         String firstKey = organization.getBody().path("data").path("api_key").asText();
         String keyId = firstKey.split("_")[2];
         ResponseEntity<JsonNode> rotated = client.exchange("/v1/api-keys/" + keyId + "/rotate", HttpMethod.POST,
-                new HttpEntity<>(Map.of("scopes", List.of("endpoints:write")), admin), JsonNode.class);
+                new HttpEntity<>(Map.of("scopes", List.of("endpoints:write", "endpoints:read")), admin), JsonNode.class);
         assertThat(rotated.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         return new Credentials(UUID.fromString(organization.getBody().path("data").path("organization_id").asText()),
                 rotated.getBody().path("data").path("api_key").asText());
@@ -142,6 +212,13 @@ class EndpointRegistrationIT {
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setBearerAuth(key);
         return client.exchange("/v1/endpoints", HttpMethod.POST, new HttpEntity<>(body, headers), JsonNode.class);
+    }
+
+    private ResponseEntity<JsonNode> readEndpoint(String key, String id) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(key);
+        return client.exchange("/v1/endpoints/" + id, HttpMethod.GET,
+                new HttpEntity<>(headers), JsonNode.class);
     }
 
     private Map<String, Object> request(String baseUrl) {

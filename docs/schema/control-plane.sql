@@ -64,6 +64,12 @@ CREATE TABLE endpoints (
 );
 CREATE INDEX endpoints_org_status_idx ON endpoints (organization_id, status);
 
+CREATE TABLE encryption_key_checks (
+    key_version varchar(80) PRIMARY KEY,
+    wrapped_check bytea NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
 CREATE TABLE subscriptions (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id uuid NOT NULL,
