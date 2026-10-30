@@ -89,6 +89,12 @@ Rotate a key to include `endpoints:write`, then call `POST /v1/endpoints` with t
 
 B2 adds encrypted `STATIC_HEADER`, `STATIC_API_KEY`, `BEARER`, `BASIC`, `TOKEN_EXCHANGE`, and `CLIENT_CREDENTIALS` configuration. A key with `endpoints:read` can call `GET /v1/endpoints/{endpoint_id}`; the response includes the authentication type and omits credentials. The local `APP_PROFILE=local` profile loads versioned wrapping keys from `ENDPOINT_LOCAL_KEK_KEYS` and `ENDPOINT_ACTIVE_KEK_VERSION` in the ignored `.env`. For an existing environment, run `python3 scripts/create-env.py --add-missing` before starting the updated stack. The control plane refuses to start with missing, malformed, or mismatched key material. See the [B2 encryption decision](docs/decisions/endpoint-auth-encryption.md) for rotation and production key-provider requirements.
 
+### Event acceptance
+
+`POST /v1/events` requires `Authorization: Bearer <api_key>` with `events:write` and an `Idempotency-Key` header. The request body contains `event_type`, an optional `schema_version` (default `1`), optional `occurred_at`, and an object in `data`. A successful request returns `202` only after its idempotency claim, event, and outbox commit with a synchronous PostgreSQL standby. Repeating the same key and body returns the original event ID; changing the body returns `409`.
+
+The standard single-Postgres Compose stack deliberately returns `503` for authenticated event publishes. Use the [C1 HA overlay](deploy/ingestion-ha/) and `python3 deploy/ingestion-ha/verify.py` after `scripts/verify-compose.sh` for the standby-backed acceptance checkpoint. `CONTROL_INTERNAL_URL`, `INGESTION_HA_JDBC_URL`, and replication credentials are read from the ignored `.env`. See the [C1 decision record](docs/decisions/event-ingestion.md).
+
 Run `scripts/verify-compose.sh` for the clean boot checkpoint, dependency failure checks, and restart persistence check. It leaves the stack running. `docker compose down` stops it and retains named volumes. For disposable local data only, `docker compose down -v` deletes the PostgreSQL, Kafka, Redis, and ClickHouse volumes.
 
 ## Navigate the codebase

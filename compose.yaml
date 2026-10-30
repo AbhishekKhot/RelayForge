@@ -214,10 +214,13 @@ services:
       SPRING_FLYWAY_PASSWORD: ${INGESTION_DB_PASSWORD:?Set INGESTION_DB_PASSWORD in .env}
       RELAYFORGE_REDIS_URI: ${REDIS_URI:?Set REDIS_URI in .env}
       RELAYFORGE_REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+      RELAYFORGE_CONTROL_INTERNAL_URL: ${CONTROL_INTERNAL_URL:?Set CONTROL_INTERNAL_URL in .env}
+      RELAYFORGE_INGESTION_ACCEPTANCE_ENABLED: "false"
     ports:
       - "127.0.0.1:${INGESTION_API_HOST_PORT:?Set INGESTION_API_HOST_PORT in .env}:8080"
     depends_on:
       postgres: { condition: service_healthy }
+      control-plane: { condition: service_healthy }
 
   ingestion-publisher:
     <<: *app
