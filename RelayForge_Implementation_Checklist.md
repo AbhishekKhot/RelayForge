@@ -170,14 +170,16 @@ Adapt service names to the actual `compose.yaml`; keep equivalent commands in th
 
 ### C1. Publish API, validation, and idempotency
 
-- [ ] Implement `POST /v1/events` with `event_type`, JSON payload, optional `occurred_at`, schema version, and required `Idempotency-Key` header as defined in LLD.
-- [ ] Validate payload size/depth, event type, timestamps, JSON structure, and organization status/quota before writing.
-- [ ] In one ingestion-shard transaction claim the registry key, insert `events`, and write the `ingestion_outbox` message `event.accepted.v1`; return `202` only after synchronous standby commit confirmation.
-- [ ] Route `(organization_id, idempotency_key)` consistently to one ingestion shard; commit its 90-day registry entry, event, and outbox atomically. Return the original event for an identical request and conflict for a changed request; test key reuse only after expiry.
-- [ ] Ensure a PostgreSQL error returns non-2xx and no acceptance claim. Do not publish directly to Kafka from the API transaction.
+- [x] Implement `POST /v1/events` with `event_type`, JSON payload, optional `occurred_at`, schema version, and required `Idempotency-Key` header as defined in LLD.
+- [x] Validate payload size/depth, event type, timestamps, JSON structure, and organization status/quota before writing.
+- [x] In one ingestion-shard transaction claim the registry key, insert `events`, and write the `ingestion_outbox` message `event.accepted.v1`; return `202` only after synchronous standby commit confirmation.
+- [x] Route `(organization_id, idempotency_key)` consistently to one ingestion shard; commit its 90-day registry entry, event, and outbox atomically. Return the original event for an identical request and conflict for a changed request; test key reuse only after expiry.
+- [x] Ensure a PostgreSQL error returns non-2xx and no acceptance claim. Do not publish directly to Kafka from the API transaction.
 
 **Touches:** `bucket_fence`, `idempotency_registry`, `events`, `ingestion_outbox`; `EventController`, `EventIngestionService`, idempotency/hash utility, quota service. API: `POST /v1/events`.
 **Checkpoint C1:** Publish an event → response is `202` with `event_id`; verify event and pending outbox row exist. Repeat same key/body → same event ID and no second event. Same key/different body → conflict. Stop PostgreSQL → request fails and does not return `202`.
+
+**C1 verification:** [PR #14 CI](https://github.com/AbhishekKhot/RelayForge/actions/runs/41043586973) passed Java 21 `mvn verify`, clean Compose boot and recovery, and the synchronous-ingestion HA checkpoint. Tests cover JSON bounds, canonical request hashing, tenant quota, atomic event/outbox/idempotency writes, same-key replay and conflict, registry expiry, standby loss, and recovery.
 
 ### C2. Event query and tenant boundary
 
