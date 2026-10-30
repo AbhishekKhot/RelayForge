@@ -100,7 +100,8 @@ class OwnerMigrationsIT {
                 .defaultSchema(schema)
                 .locations("filesystem:../relayforge-" + (owner.equals("delivery") ? "delivery-api" : owner) + "/src/main/resources/db/migration")
                 .load();
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(owner.equals("control-plane") ? 2 : 1);
+        assertThat(flyway.migrate().migrationsExecuted)
+                .isEqualTo(owner.equals("control-plane") || owner.equals("ingestion") ? 2 : 1);
         assertThat(flyway.migrate().migrationsExecuted).isZero();
     }
 

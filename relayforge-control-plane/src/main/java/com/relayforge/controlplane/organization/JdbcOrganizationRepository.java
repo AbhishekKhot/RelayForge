@@ -80,6 +80,17 @@ public final class JdbcOrganizationRepository implements OrganizationRepository 
     }
 
     @Override
+    public Optional<Integer> findActiveEventRateLimit(UUID organizationId) {
+        List<Integer> limits = jdbc.query("SELECT (quota_config->>'events_per_minute')::integer "
+                        + "FROM organizations WHERE id = ? AND status = 'ACTIVE'",
+                (result, rowNumber) -> result.getObject(1, Integer.class), organizationId);
+        if (limits.size() != 1 || limits.get(0) == null || limits.get(0) < 1) {
+            return Optional.empty();
+        }
+        return Optional.of(limits.get(0));
+    }
+
+    @Override
     public Optional<OrganizationView> findOrganizationForOwner(UUID requestedId, UUID authenticatedId) {
         return jdbc.query("SELECT id, name, plan_code FROM organizations WHERE id = ? AND id = ?",
                 (result, rowNumber) -> new OrganizationView(
