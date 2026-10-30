@@ -135,13 +135,15 @@ Adapt service names to the actual `compose.yaml`; keep equivalent commands in th
 
 ### B1. Endpoint request validation and SSRF protection
 
-- [ ] Implement URL composition and validation for base URL, path, query params, and headers; allow only supported schemes (HTTPS by default; HTTP only in explicit local/dev policy).
-- [ ] Reject loopback, private, link-local, multicast, reserved, and cloud metadata IP ranges after DNS resolution; defend against DNS rebinding by validating resolved targets at registration and immediately before delivery.
-- [ ] Disable redirects in the outbound HTTP client. Reject unsupported URL forms, embedded credentials, unsafe headers, and invalid timeouts/concurrency/attempt limits.
-- [ ] Keep outbound networking behind a single policy-enforcing client so callers cannot bypass SSRF checks.
+- [x] Implement URL composition and validation for base URL, path, query params, and headers; allow only supported schemes (HTTPS by default; HTTP only in explicit local/dev policy).
+- [x] Reject loopback, private, link-local, multicast, reserved, and cloud metadata IP ranges after DNS resolution; defend against DNS rebinding by validating resolved targets at registration and immediately before delivery.
+- [x] Disable redirects in the outbound HTTP client. Reject unsupported URL forms, embedded credentials, unsafe headers, and invalid timeouts/concurrency/attempt limits.
+- [x] Keep outbound networking behind a single policy-enforcing client so callers cannot bypass SSRF checks.
 
 **Touches:** endpoint validation/security module; `endpoints` only after validation succeeds. API: `POST /v1/endpoints`.  
 **Checkpoint B1:** Local simulator URL works under an explicit dev allowlist; metadata/private IP URLs are rejected; redirect response is not followed; malformed URL/header/query configuration gets a sanitized 4xx.
+
+**B1 verification:** [PR #12 CI](https://github.com/AbhishekKhot/RelayForge/actions/runs/41007974354) passed Java 21 `mvn verify` and `scripts/verify-compose.sh`. Tests cover public HTTPS URL composition, blocked private and reserved DNS answers, a rebinding answer before send, disabled redirects, sanitized registration errors, atomic endpoint/subscription inserts, and the `.env`-configured local simulator. B1 supports `authentication.type=NONE`; credential modes remain B2. The outbound client is ready for delivery worker integration in the later delivery milestone.
 
 ### B2. Authentication configuration and encryption
 
