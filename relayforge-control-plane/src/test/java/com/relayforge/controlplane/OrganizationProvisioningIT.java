@@ -210,6 +210,10 @@ class OrganizationProvisioningIT {
                 Map.of("name", "Custom Quota", "quota_overrides", Map.of("events_per_minute", 1200)));
         assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         String id = created.getBody().path("data").path("organization_id").asText();
+        String key = created.getBody().path("data").path("api_key").asText();
+        ResponseEntity<JsonNode> authorization = get("/v1/auth/check", key);
+        assertThat(authorization.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(authorization.getBody().path("events_per_minute").asInt()).isEqualTo(1200);
         try (var connection = DriverManager.getConnection(
                 DATABASE.getJdbcUrl(), DATABASE.getUsername(), DATABASE.getPassword());
                 var statement = connection.prepareStatement(
