@@ -16,10 +16,12 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.containers.PostgreSQLContainer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+@ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class OrganizationProvisioningIT {
     private static final String PROVISIONING_CREDENTIAL = "trusted-provisioning-credential-for-tests-12345";
@@ -42,6 +44,8 @@ class OrganizationProvisioningIT {
         registry.add("relayforge.database.password", DATABASE::getPassword);
         registry.add("relayforge.provisioning.credential", () -> PROVISIONING_CREDENTIAL);
         registry.add("relayforge.security.api-key-hmac-key", () -> "0123456789abcdef".repeat(4));
+        registry.add("relayforge.encryption.local-keys", () -> "local-v1:" + "fedcba9876543210".repeat(4));
+        registry.add("relayforge.encryption.active-version", () -> "local-v1");
     }
 
     @Autowired
