@@ -24,6 +24,7 @@ generated = {
 }
 generated["KAFKA_CLUSTER_ID"] = urlsafe_b64encode(uuid4().bytes).decode().rstrip("=")
 generated["API_KEY_HMAC_KEY"] = token_hex(32)
+generated["ENDPOINT_LOCAL_KEK_KEYS"] = "local-v1:" + token_hex(32)
 
 lines = []
 for line in EXAMPLE.read_text().splitlines():
