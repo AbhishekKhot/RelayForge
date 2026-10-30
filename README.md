@@ -87,6 +87,12 @@ The `201` response contains `organization_id` and the API key once. Use `Authori
 
 Rotate a key to include `endpoints:write`, then call `POST /v1/endpoints` with the [documented request shape](RelayForge_Low_Level_Design.md#64-register-endpoint). B1 accepts `authentication.type=NONE`; other authentication modes are scheduled for B2. The destination must use HTTPS unless the control plane runs with `APP_PROFILE=local` and the URL exactly matches the simulator host and port in `WEBHOOK_SIMULATOR_URL`. These settings come from the ignored `.env`. URL, DNS, header, query, event type, and delivery limits are validated before the endpoint and subscriptions are stored atomically. See the [B1 destination policy](docs/decisions/endpoint-ssrf-policy.md).
 
+### Event acceptance
+
+`POST /v1/events` requires `Authorization: Bearer <api_key>` with `events:write` and an `Idempotency-Key` header. The request body contains `event_type`, an optional `schema_version` (default `1`), optional `occurred_at`, and an object in `data`. A successful request returns `202` only after its idempotency claim, event, and outbox commit with a synchronous PostgreSQL standby. Repeating the same key and body returns the original event ID; changing the body returns `409`.
+
+The standard single-Postgres Compose stack deliberately returns `503` for authenticated event publishes. Use the [C1 HA overlay](deploy/ingestion-ha/) and `python3 deploy/ingestion-ha/verify.py` after `scripts/verify-compose.sh` for the standby-backed acceptance checkpoint. `CONTROL_INTERNAL_URL`, `INGESTION_HA_JDBC_URL`, and replication credentials are read from the ignored `.env`. See the [C1 decision record](docs/decisions/event-ingestion.md).
+
 Run `scripts/verify-compose.sh` for the clean boot checkpoint, dependency failure checks, and restart persistence check. It leaves the stack running. `docker compose down` stops it and retains named volumes. For disposable local data only, `docker compose down -v` deletes the PostgreSQL, Kafka, Redis, and ClickHouse volumes.
 
 ## Navigate the codebase

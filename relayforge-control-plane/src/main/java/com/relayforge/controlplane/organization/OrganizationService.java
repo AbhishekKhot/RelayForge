@@ -155,6 +155,11 @@ public final class OrganizationService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
     }
 
+    public int eventRateLimitFor(UUID authenticatedId) {
+        return repository.findActiveEventRateLimit(authenticatedId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE));
+    }
+
     private Map<String, Integer> quotas(Map<String, Object> overrides) {
         Map<String, Integer> result = new LinkedHashMap<>(FREE_DEFAULTS);
         if (overrides != null) {

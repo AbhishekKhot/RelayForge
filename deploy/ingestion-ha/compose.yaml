@@ -1,0 +1,75 @@
+services:
+  ingestion-primary:
+    image: ${POSTGRES_IMAGE:?Set POSTGRES_IMAGE in .env}
+    command: ["postgres", "-c", "wal_level=replica", "-c", "max_wal_senders=10", "-c", "max_replication_slots=10", "-c", "fsync=on"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_SUPERUSER_USER:?Set POSTGRES_SUPERUSER_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?Set POSTGRES_SUPERUSER_PASSWORD in .env}
+      POSTGRES_DB: postgres
+      INGESTION_DB_USER: ${INGESTION_DB_USER:?Set INGESTION_DB_USER in .env}
+      INGESTION_DB_PASSWORD: ${INGESTION_DB_PASSWORD:?Set INGESTION_DB_PASSWORD in .env}
+      INGESTION_REPLICATION_USER: ${INGESTION_REPLICATION_USER:?Set INGESTION_REPLICATION_USER in .env}
+      INGESTION_REPLICATION_PASSWORD: ${INGESTION_REPLICATION_PASSWORD:?Set INGESTION_REPLICATION_PASSWORD in .env}
+    volumes:
+      - ingestion-primary-data:/var/lib/postgresql/data
+      - ./deploy/ingestion-ha/01-init.sh:/docker-entrypoint-initdb.d/01-init.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "PGPASSWORD=\"$${POSTGRES_PASSWORD}\" psql -U \"$${POSTGRES_USER}\" -d postgres -tAc 'SELECT 1' | grep -qx 1"]
+      interval: 5s
+      timeout: 5s
+      start_period: 20s
+      retries: 12
+
+  ingestion-standby:
+    image: ${POSTGRES_IMAGE:?Set POSTGRES_IMAGE in .env}
+    entrypoint: ["/bin/bash", "/opt/relayforge/standby-entrypoint.sh"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_SUPERUSER_USER:?Set POSTGRES_SUPERUSER_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?Set POSTGRES_SUPERUSER_PASSWORD in .env}
+      PGDATA: /var/lib/postgresql/data/pgdata
+      INGESTION_REPLICATION_USER: ${INGESTION_REPLICATION_USER:?Set INGESTION_REPLICATION_USER in .env}
+      INGESTION_REPLICATION_PASSWORD: ${INGESTION_REPLICATION_PASSWORD:?Set INGESTION_REPLICATION_PASSWORD in .env}
+    volumes:
+      - ingestion-standby-data:/var/lib/postgresql/data
+      - ./deploy/ingestion-ha/standby-entrypoint.sh:/opt/relayforge/standby-entrypoint.sh:ro
+    depends_on:
+      ingestion-primary: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d postgres"]
+      interval: 5s
+      timeout: 5s
+      start_period: 30s
+      retries: 12
+
+  ingestion-ha-enable:
+    image: ${POSTGRES_IMAGE:?Set POSTGRES_IMAGE in .env}
+    entrypoint: ["/bin/bash", "/opt/relayforge/enable-sync.sh"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_SUPERUSER_USER:?Set POSTGRES_SUPERUSER_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?Set POSTGRES_SUPERUSER_PASSWORD in .env}
+    volumes:
+      - ./deploy/ingestion-ha/enable-sync.sh:/opt/relayforge/enable-sync.sh:ro
+    depends_on:
+      ingestion-primary: { condition: service_healthy }
+      ingestion-standby: { condition: service_healthy }
+    restart: "no"
+
+  ingestion:
+    environment:
+      RELAYFORGE_DATABASE_URL: ${INGESTION_HA_JDBC_URL:?Set INGESTION_HA_JDBC_URL in .env}
+      SPRING_FLYWAY_URL: ${INGESTION_HA_JDBC_URL:?Set INGESTION_HA_JDBC_URL in .env}
+      RELAYFORGE_INGESTION_ACCEPTANCE_ENABLED: "true"
+      RELAYFORGE_INGESTION_SYNCHRONOUS_STANDBY_NAME: ingestion_standby
+    depends_on:
+      ingestion-ha-enable: { condition: service_completed_successfully }
+      control-plane: { condition: service_healthy }
+
+  ingestion-publisher:
+    environment:
+      RELAYFORGE_DATABASE_URL: ${INGESTION_HA_JDBC_URL:?Set INGESTION_HA_JDBC_URL in .env}
+    depends_on:
+      ingestion-ha-enable: { condition: service_completed_successfully }
+
+volumes:
+  ingestion-primary-data:
+  ingestion-standby-data:

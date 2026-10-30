@@ -38,7 +38,7 @@ verify_migrations() {
     local count
     for database in relayforge_control relayforge_ingestion relayforge_delivery; do
         local expected=1
-        if [[ "$database" == relayforge_control ]]; then
+        if [[ "$database" == relayforge_control || "$database" == relayforge_ingestion ]]; then
             expected=2
         fi
         count="$(docker compose exec -T postgres sh -c \

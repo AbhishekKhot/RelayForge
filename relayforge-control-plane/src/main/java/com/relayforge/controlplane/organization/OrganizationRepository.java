@@ -21,6 +21,8 @@ public interface OrganizationRepository {
 
     boolean activeOrganizationExists(UUID organizationId);
 
+    Optional<Integer> findActiveEventRateLimit(UUID organizationId);
+
     Optional<OrganizationView> findOrganizationForOwner(UUID requestedId, UUID authenticatedId);
 
     void insertUser(UUID id, UUID organizationId, String email, String name, String metadataJson);

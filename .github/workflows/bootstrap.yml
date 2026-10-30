@@ -25,3 +25,5 @@ jobs:
         run: |
           chmod +x scripts/verify-compose.sh
           scripts/verify-compose.sh
+      - name: Verify synchronous ingestion acceptance
+        run: python3 deploy/ingestion-ha/verify.py
