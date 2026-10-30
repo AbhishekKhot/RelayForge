@@ -83,6 +83,10 @@ The control plane accepts trusted `POST /v1/organizations` and `POST /v1/users` 
 
 The `201` response contains `organization_id` and the API key once. Use `Authorization: Bearer <api_key>` for `GET /v1/auth/check` and `GET /v1/organizations/{organization_id}`. A key can read only its own organization. Trusted `POST /v1/api-keys/{key_id}/rotate` returns a replacement key once and revokes the old one; `POST /v1/api-keys/{key_id}/revoke` invalidates a key. If a provisioning response is lost, `GET /v1/organizations/recover` with the original `Idempotency-Key` and provisioning credential returns only the organization and public key IDs. See the [A3 decision record](docs/decisions/organization-provisioning.md) for scope and quota policy.
 
+### Endpoint registration
+
+Rotate a key to include `endpoints:write`, then call `POST /v1/endpoints` with the [documented request shape](RelayForge_Low_Level_Design.md#64-register-endpoint). B1 accepts `authentication.type=NONE`; other authentication modes are scheduled for B2. The destination must use HTTPS unless the control plane runs with `APP_PROFILE=local` and the URL exactly matches the simulator host and port in `WEBHOOK_SIMULATOR_URL`. These settings come from the ignored `.env`. URL, DNS, header, query, event type, and delivery limits are validated before the endpoint and subscriptions are stored atomically. See the [B1 destination policy](docs/decisions/endpoint-ssrf-policy.md).
+
 Run `scripts/verify-compose.sh` for the clean boot checkpoint, dependency failure checks, and restart persistence check. It leaves the stack running. `docker compose down` stops it and retains named volumes. For disposable local data only, `docker compose down -v` deletes the PostgreSQL, Kafka, Redis, and ClickHouse volumes.
 
 ## Navigate the codebase

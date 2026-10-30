@@ -3,10 +3,17 @@ package com.relayforge.controlplane;
 import com.relayforge.controlplane.organization.JdbcOrganizationRepository;
 import com.relayforge.controlplane.organization.OrganizationRepository;
 import com.relayforge.controlplane.organization.OrganizationService;
+import com.relayforge.controlplane.endpoint.EndpointRegistrationService;
+import com.relayforge.controlplane.endpoint.EndpointRepository;
+import com.relayforge.controlplane.endpoint.JdbcEndpointRepository;
 import com.relayforge.controlplane.security.ApiKeyCodec;
+import com.relayforge.outbound.DestinationPolicy;
+import com.relayforge.outbound.SafeWebhookClient;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import java.security.SecureRandom;
+import java.net.InetAddress;
+import java.net.URI;
 import java.time.Clock;
 import java.util.HexFormat;
 import javax.sql.DataSource;
@@ -15,6 +22,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.JdbcTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -62,5 +70,30 @@ public class ControlPlaneDataConfiguration {
     OrganizationService organizationService(OrganizationRepository repository, ApiKeyCodec codec,
             TransactionTemplate controlTransactionTemplate, ObjectMapper objectMapper) {
         return new OrganizationService(repository, codec, controlTransactionTemplate, objectMapper, Clock.systemUTC());
+    }
+
+    @Bean
+    DestinationPolicy destinationPolicy(Environment environment) {
+        boolean local = environment.acceptsProfiles(Profiles.of("local"));
+        String simulatorUrl = environment.getProperty("relayforge.ssrf.local-simulator-url");
+        URI simulator = local && simulatorUrl != null ? URI.create(simulatorUrl) : null;
+        return new DestinationPolicy(InetAddress::getAllByName, local, simulator);
+    }
+
+    @Bean(destroyMethod = "close")
+    SafeWebhookClient safeWebhookClient(DestinationPolicy policy) {
+        return new SafeWebhookClient(policy);
+    }
+
+    @Bean
+    EndpointRepository endpointRepository(JdbcTemplate controlJdbcTemplate) {
+        return new JdbcEndpointRepository(controlJdbcTemplate);
+    }
+
+    @Bean
+    EndpointRegistrationService endpointRegistrationService(EndpointRepository repository,
+            DestinationPolicy policy, TransactionTemplate controlTransactionTemplate, ObjectMapper objectMapper) {
+        return new EndpointRegistrationService(repository, policy, controlTransactionTemplate,
+                objectMapper, Clock.systemUTC());
     }
 }
