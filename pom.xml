@@ -19,6 +19,7 @@
     <modules>
         <module>relayforge-runtime</module>
         <module>relayforge-api-support</module>
+        <module>relayforge-outbound-security</module>
         <module>relayforge-db-migration</module>
         <module>relayforge-control-plane</module>
         <module>relayforge-control-publisher</module>
