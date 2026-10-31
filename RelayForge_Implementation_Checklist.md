@@ -222,6 +222,8 @@ Adapt service names to the actual `compose.yaml`; keep equivalent commands in th
 **Touches:** Kafka topic/config, message DTOs/serializers, all consumers.  
 **Checkpoint D2:** Re-send the same valid message twice and verify no duplicate logical records. Send malformed envelope and verify it is observable/quarantined, not silently discarded or retried forever.
 
+**D2 foundation:** Version-1 validation for the four source topics and metadata-only quarantine topics are implemented. Shared consumer support provides a bounded poll loop, manual contiguous offset commits, acknowledged quarantine, and rebalance recovery for future owner handlers. The D2 checkpoint and the checkboxes above remain open until concrete routing, delivery, and analytics handlers use it, duplicate-safe owner writes are verified, Docker acceptance passes, and production partition counts are measured.
+
 ### D3. Event router and logical delivery creation
 
 - [ ] Apply secret-free configuration snapshots to delivery-owned endpoint/subscription projections and contiguous per-organization revision state before routing becomes ready.
