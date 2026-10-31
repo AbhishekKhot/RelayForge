@@ -159,14 +159,17 @@ Adapt service names to the actual `compose.yaml`; keep equivalent commands in th
 
 ### B3. Atomic endpoint + subscriptions registration
 
-- [ ] Implement `POST /v1/endpoints` accepting `event_types` array plus destination/auth settings.
-- [ ] In one PostgreSQL transaction insert the endpoint and all `subscriptions` rows; reject duplicate/invalid event types and roll back the whole transaction on any failure.
-- [ ] Implement `GET /v1/endpoints`, `GET /v1/endpoints/{endpoint_id}`, `PATCH /v1/endpoints/{endpoint_id}`, `GET /v1/subscriptions`; all list/query APIs use organization scope and bounded cursor pagination.
-- [ ] Implement `POST /v1/endpoints/{endpoint_id}/rotate-secret` for RelayForge's outbound signing secret; audit the action and return the new secret once only if the contract requires it.
-- [ ] Ensure endpoint disable/update increments `version` and is observed by workers before sending.
+- [x] Implement `POST /v1/endpoints` accepting `event_types` array plus destination/auth settings.
+- [x] In one PostgreSQL transaction insert the endpoint and all `subscriptions` rows; reject duplicate/invalid event types and roll back the whole transaction on any failure.
+- [x] Implement `GET /v1/endpoints`, `GET /v1/endpoints/{endpoint_id}`, `PATCH /v1/endpoints/{endpoint_id}`, `GET /v1/subscriptions`; all list/query APIs use organization scope and bounded cursor pagination.
+- [x] Implement `POST /v1/endpoints/{endpoint_id}/rotate-secret` for RelayForge's outbound signing secret; audit the action and return the new secret once only if the contract requires it.
+- [x] Ensure endpoint disable/update increments `version` and commits a secret-free configuration change to the control outbox.
+- [ ] Ensure delivery workers observe the latest configuration before sending. This is verified with the D3 worker/projection implementation.
 
 **Touches:** `endpoints`, `subscriptions`, `audit_records`; `EndpointController`, endpoint/subscription services.  
 **Checkpoint B3:** Register one endpoint with two event types → verify one endpoint and two subscription rows. Submit an invalid event type among valid values → verify no endpoint or subscription rows were committed. Cross-organization endpoint access returns not-found/forbidden per API contract.
+
+**B3 verification:** [PR #16 CI](https://github.com/AbhishekKhot/RelayForge/actions/runs/41176049057) passed Java 21 `mvn verify`, clean Compose acceptance including endpoint management, and synchronous-ingestion HA acceptance. Tests cover tenant-scoped pagination, optimistic updates, redacted one-time secret rotation, encryption AAD versions, and atomic audit/configuration outbox writes. Worker observation remains the D3 integration gate.
 
 ## 5. Milestone C — Durable event ingestion
 
