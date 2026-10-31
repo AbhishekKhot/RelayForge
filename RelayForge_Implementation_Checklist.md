@@ -185,12 +185,14 @@ Adapt service names to the actual `compose.yaml`; keep equivalent commands in th
 
 ### C2. Event query and tenant boundary
 
-- [ ] Implement `GET /v1/events/{event_id}` by resolving the versioned locator on ingestion and composing a bounded delivery-owned progress/summary read; return only data belonging to the authenticated organization.
-- [ ] Apply bounded payload response size and avoid leaking internal ciphertext or internal outbox payloads.
-- [ ] Add integration tests for guessed UUIDs across organizations and invalid IDs.
+- [x] Implement `GET /v1/events/{event_id}` by resolving the versioned locator on ingestion and composing a bounded delivery-owned progress/summary read; return only data belonging to the authenticated organization.
+- [x] Apply bounded payload response size and avoid leaking internal ciphertext or internal outbox payloads.
+- [x] Add integration tests for guessed UUIDs across organizations and invalid IDs.
 
 **Touches:** `events`, `deliveries`; `EventQueryService`, `EventController`. API: `GET /v1/events/{event_id}`.  
 **Checkpoint C2:** Event owner can query acceptance; another organization cannot distinguish or read the event. Before routing is implemented, the delivery summary is pending; after D3 it reflects current counts.
+
+**C2 verification:** [PR #15 CI](https://github.com/AbhishekKhot/RelayForge/actions/runs/41176119743) passed Java 21 `mvn verify`, base Compose acceptance, and synchronous-ingestion HA acceptance with owner and cross-tenant event reads. Tests cover invalid locators, bounded payloads, delivery summary counts, internal credential checks, and unavailable delivery responses.
 
 ## 6. Milestone D — Transactional outbox, Kafka, and routing
 
