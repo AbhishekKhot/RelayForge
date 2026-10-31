@@ -39,6 +39,15 @@ def post(base, path, body, headers):
         return error.code, json.load(error)
 
 
+def get(base, path, headers):
+    request = Request(base + path, headers=headers, method="GET")
+    try:
+        with urlopen(request, timeout=15) as response:
+            return response.status, json.load(response)
+    except HTTPError as error:
+        return error.code, json.load(error)
+
+
 def count(table, organization_id):
     assert table in {"events", "ingestion_outbox"}
     result = run(HA + ["exec", "-T", "ingestion-primary", "sh", "-c",
@@ -73,6 +82,19 @@ def verify():
     status, first = post(ingestion, "/v1/events", body,
                          {**bearer, "Idempotency-Key": key})
     assert status == 202, (status, first)
+    event_id = first["data"]["event_id"]
+    status, owned = get(ingestion, f"/v1/events/{event_id}", bearer)
+    assert status == 200 and owned["data"]["event_id"] == event_id, (status, owned)
+    assert owned["data"]["payload"] == body["data"]
+    assert owned["data"]["delivery_summary"]["status"] == "PENDING"
+    other_admin = {**admin, "Idempotency-Key": str(uuid4())}
+    status, other = post(control, "/v1/organizations", {"name": "C2 other"}, other_admin)
+    assert status == 201, status
+    other_bearer = {"Authorization": "Bearer " + other["data"]["api_key"]}
+    status, _ = get(ingestion, f"/v1/events/{event_id}", other_bearer)
+    assert status == 404
+    status, _ = get(ingestion, "/v1/events/invalid-locator", bearer)
+    assert status == 404
     status, repeat = post(ingestion, "/v1/events", body,
                           {**bearer, "Idempotency-Key": key})
     assert status == 202 and repeat["data"]["event_id"] == first["data"]["event_id"], (status, repeat)

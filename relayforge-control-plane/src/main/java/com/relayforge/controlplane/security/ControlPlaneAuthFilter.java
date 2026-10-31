@@ -56,7 +56,7 @@ public final class ControlPlaneAuthFilter extends OncePerRequestFilter {
             chain.doFilter(request, response);
             return;
         }
-        String requiredScope = requiredScope(path, request.getMethod());
+        String requiredScope = requiredScope(path, request);
         if (requiredScope == null) {
             reject(request, response, HttpStatus.FORBIDDEN);
             return;
@@ -87,9 +87,14 @@ public final class ControlPlaneAuthFilter extends OncePerRequestFilter {
                 || path.startsWith("/v1/api-keys/");
     }
 
-    private String requiredScope(String path, String method) {
+    private String requiredScope(String path, HttpServletRequest request) {
+        String method = request.getMethod();
         if (path.equals("/v1/auth/check") && method.equals("GET")) {
-            return "events:write";
+            String requested = request.getParameter("scope");
+            if (requested == null || requested.equals("events:write")) {
+                return "events:write";
+            }
+            return requested.equals("events:read") ? "events:read" : null;
         }
         if (path.startsWith("/v1/organizations/") && method.equals("GET")) {
             return "organizations:read";

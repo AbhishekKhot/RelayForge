@@ -6,6 +6,10 @@ import java.util.UUID;
 public interface OrganizationAuthenticator {
     AuthenticatedOrganization authenticate(String authorization);
 
+    default AuthenticatedOrganization authenticateForRead(String authorization) {
+        return authenticate(authorization);
+    }
+
     record AuthenticatedOrganization(UUID id, int eventsPerMinute) {
     }
 }

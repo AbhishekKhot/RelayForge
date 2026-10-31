@@ -63,7 +63,7 @@ public final class OrganizationService {
                 }
                 repository.insertOrganization(organizationId, validatedName, selectedPlan, toJson(quotas));
                 repository.insertKey(UUID.randomUUID(), organizationId, key,
-                        List.of("events:write", "organizations:read"));
+                        List.of("events:write", "events:read", "organizations:read"));
                 repository.insertProvisioningRequest(requestHash, organizationId, key.keyId());
                 repository.insertAudit(organizationId, "organization.created", "organization",
                         organizationId, requestId, "{}");

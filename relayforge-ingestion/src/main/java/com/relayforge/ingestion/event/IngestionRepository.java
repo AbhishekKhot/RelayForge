@@ -28,6 +28,12 @@ public interface IngestionRepository {
     void insertOutbox(UUID organizationId, UUID eventId, LocalDate day, String locator,
             String messageJson);
 
+    Optional<StoredEvent> findEvent(UUID organizationId, LocalDate day, UUID eventId);
+
+    record StoredEvent(String eventType, int schemaVersion, String payloadJson,
+            Instant occurredAt, Instant acceptedAt) {
+    }
+
     record RegistryEntry(byte[] requestHash, String locator, UUID eventId, Instant acceptedAt,
             Instant expiresAt) {
         @Override
