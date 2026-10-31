@@ -49,10 +49,12 @@ CREATE TABLE endpoints (
     auth_wrapped_dek bytea,
     auth_key_version varchar(80),
     auth_nonce bytea,
+    auth_config_version bigint CHECK (auth_config_version > 0),
     signing_secret_ciphertext bytea,
     signing_wrapped_dek bytea,
     signing_key_version varchar(80),
     signing_nonce bytea,
+    signing_secret_version bigint CHECK (signing_secret_version > 0),
     status varchar(24) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'PAUSED', 'DISABLED')),
     timeout_ms integer NOT NULL DEFAULT 10000 CHECK (timeout_ms BETWEEN 100 AND 60000),
     max_concurrency integer NOT NULL DEFAULT 10 CHECK (max_concurrency BETWEEN 1 AND 1000),
@@ -63,6 +65,7 @@ CREATE TABLE endpoints (
     UNIQUE (id, organization_id)
 );
 CREATE INDEX endpoints_org_status_idx ON endpoints (organization_id, status);
+CREATE INDEX endpoints_org_id_idx ON endpoints (organization_id, id);
 
 CREATE TABLE encryption_key_checks (
     key_version varchar(80) PRIMARY KEY,
@@ -85,6 +88,7 @@ CREATE TABLE subscriptions (
     FOREIGN KEY (endpoint_id, organization_id) REFERENCES endpoints(id, organization_id)
 );
 CREATE INDEX subscriptions_route_idx ON subscriptions (organization_id, event_type, status, endpoint_id);
+CREATE INDEX subscriptions_org_id_idx ON subscriptions (organization_id, id);
 
 CREATE TABLE shard_bucket_map (
     bucket_id smallint PRIMARY KEY CHECK (bucket_id BETWEEN 0 AND 4095),

@@ -4,6 +4,8 @@ import com.relayforge.controlplane.organization.JdbcOrganizationRepository;
 import com.relayforge.controlplane.organization.OrganizationRepository;
 import com.relayforge.controlplane.organization.OrganizationService;
 import com.relayforge.controlplane.endpoint.EndpointRegistrationService;
+import com.relayforge.controlplane.endpoint.EndpointChangeRecorder;
+import com.relayforge.controlplane.endpoint.EndpointManagementService;
 import com.relayforge.controlplane.endpoint.EndpointRepository;
 import com.relayforge.controlplane.endpoint.JdbcEndpointRepository;
 import com.relayforge.controlplane.endpoint.auth.EndpointAuthValidator;
@@ -110,10 +112,25 @@ public class ControlPlaneDataConfiguration {
     }
 
     @Bean
+    EndpointChangeRecorder endpointChangeRecorder(EndpointRepository repository, ObjectMapper objectMapper) {
+        return new EndpointChangeRecorder(repository, objectMapper);
+    }
+
+    @Bean
     EndpointRegistrationService endpointRegistrationService(EndpointRepository repository,
             DestinationPolicy policy, TransactionTemplate controlTransactionTemplate, ObjectMapper objectMapper,
-            EndpointAuthValidator authValidator, EndpointSecretCipher secretCipher) {
+            EndpointAuthValidator authValidator, EndpointSecretCipher secretCipher,
+            EndpointChangeRecorder changes) {
         return new EndpointRegistrationService(repository, policy, controlTransactionTemplate,
-                objectMapper, Clock.systemUTC(), authValidator, secretCipher);
+                objectMapper, Clock.systemUTC(), authValidator, secretCipher, changes);
+    }
+
+    @Bean
+    EndpointManagementService endpointManagementService(EndpointRepository repository,
+            TransactionTemplate controlTransactionTemplate, EndpointChangeRecorder changes,
+            DestinationPolicy policy, EndpointAuthValidator authValidator,
+            EndpointSecretCipher secretCipher, ObjectMapper objectMapper) {
+        return new EndpointManagementService(repository, controlTransactionTemplate, changes,
+                policy, authValidator, secretCipher, objectMapper, new SecureRandom());
     }
 }

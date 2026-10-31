@@ -1,6 +1,8 @@
 package com.relayforge.controlplane;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.relayforge.controlplane.endpoint.auth.EndpointSecretCipher;
+import com.relayforge.controlplane.endpoint.auth.EndpointSecretCipher.EncryptedSecret;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -12,6 +14,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.HttpEntity;
@@ -75,6 +78,9 @@ class EndpointRegistrationIT {
     @Autowired
     private TestRestTemplate client;
 
+    @Autowired
+    private EndpointSecretCipher secretCipher;
+
     @Test
     void registersValidatedSimulatorEndpointAndSubscriptionsAtomically() throws Exception {
         Credentials credentials = credentials();
@@ -109,6 +115,8 @@ class EndpointRegistrationIT {
                 List.of("payment.completed", "payment.failed"), 60001);
         Map<String, Object> duplicateEvents = request(simulatorUrl(), Map.of(),
                 List.of("payment.completed", "payment.completed"), 10000);
+        Map<String, Object> invalidEvents = request(simulatorUrl(), Map.of(),
+                List.of("payment.completed", "invalid event"), 10000);
         Map<String, Object> badQuery = new HashMap<>(request(simulatorUrl(), Map.of(),
                 List.of("payment.completed"), 10000));
         @SuppressWarnings("unchecked")
@@ -116,7 +124,8 @@ class EndpointRegistrationIT {
         destination.put("query_params", Map.of("bad\nname", "value"));
         badQuery.put("destination", destination);
 
-        for (Map<String, Object> body : List.of(badHeader, badTimeout, duplicateEvents, badQuery)) {
+        for (Map<String, Object> body : List.of(badHeader, badTimeout, duplicateEvents,
+                invalidEvents, badQuery)) {
             assertThat(register(credentials.key(), body).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         }
         assertThat(count("SELECT count(*) FROM endpoints WHERE organization_id = ?",
@@ -190,6 +199,162 @@ class EndpointRegistrationIT {
                 credentials.organizationId())).isZero();
     }
 
+    @Test
+    void listsEndpointsAndSubscriptionsWithTenantScopedCursorPages() throws Exception {
+        Credentials owner = credentials();
+        Credentials other = credentials();
+        String firstId = register(owner.key(), request(simulatorUrl())).getBody()
+                .path("data").path("endpoint_id").asText();
+        register(owner.key(), request(simulatorUrl()));
+        register(other.key(), request(simulatorUrl()));
+
+        ResponseEntity<JsonNode> firstPage = get(owner.key(), "/v1/endpoints?limit=1");
+        assertThat(firstPage.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(firstPage.getBody().path("data").size()).isEqualTo(1);
+        String cursor = firstPage.getBody().path("next_cursor").asText();
+        assertThat(cursor).isNotBlank();
+        ResponseEntity<JsonNode> nextPage = get(owner.key(), "/v1/endpoints?limit=1&cursor=" + cursor);
+        assertThat(nextPage.getBody().path("data").size()).isEqualTo(1);
+        assertThat(nextPage.getBody().path("next_cursor").isNull()).isTrue();
+        assertThat(nextPage.getBody().toString()).doesNotContain(other.organizationId().toString());
+
+        ResponseEntity<JsonNode> subscriptions = get(owner.key(), "/v1/subscriptions?limit=2");
+        assertThat(subscriptions.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(subscriptions.getBody().path("data").size()).isEqualTo(2);
+        assertThat(subscriptions.getBody().path("next_cursor").isNull()).isFalse();
+        assertThat(get(owner.key(), "/v1/endpoints/" + firstId).getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(get(other.key(), "/v1/endpoints/" + firstId).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(get(owner.key(), "/v1/endpoints?limit=101").getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(get(owner.key(), "/v1/endpoints?cursor=invalid").getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void patchesWithVersionPreconditionAndWritesMonotonicSecretFreeChange() throws Exception {
+        client.getRestTemplate().setRequestFactory(new JdkClientHttpRequestFactory());
+        Credentials owner = credentials();
+        String id = register(owner.key(), request(simulatorUrl())).getBody()
+                .path("data").path("endpoint_id").asText();
+        assertThat(count("SELECT config_revision FROM organizations WHERE id = ?",
+                owner.organizationId())).isEqualTo(1);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(owner.key());
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("If-Match", "\"1\"");
+        ResponseEntity<JsonNode> patched = client.exchange("/v1/endpoints/" + id, HttpMethod.PATCH,
+                new HttpEntity<>(Map.of("name", "Updated", "status", "DISABLED"), headers), JsonNode.class);
+        assertThat(patched.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(patched.getBody().path("data").path("version").asLong()).isEqualTo(2);
+        assertThat(patched.getBody().path("data").path("status").asText()).isEqualTo("DISABLED");
+        assertThat(patched.getHeaders().getETag()).isEqualTo("\"2\"");
+        assertThat(count("SELECT config_revision FROM organizations WHERE id = ?",
+                owner.organizationId())).isEqualTo(2);
+        assertThat(count("SELECT count(*) FROM control_outbox WHERE organization_id = ?",
+                owner.organizationId())).isEqualTo(2);
+        assertThat(count("SELECT count(*) FROM audit_records WHERE organization_id = ? AND action = 'endpoint.disabled'",
+                owner.organizationId())).isEqualTo(1);
+
+        ResponseEntity<JsonNode> stale = client.exchange("/v1/endpoints/" + id, HttpMethod.PATCH,
+                new HttpEntity<>(Map.of("name", "Stale"), headers), JsonNode.class);
+        assertThat(stale.getStatusCode()).isEqualTo(HttpStatus.PRECONDITION_FAILED);
+        assertThat(get(owner.key(), "/v1/endpoints/" + id).getBody().path("data").path("name").asText())
+                .isEqualTo("Updated");
+        assertThat(count("SELECT config_revision FROM organizations WHERE id = ?",
+                owner.organizationId())).isEqualTo(2);
+    }
+
+    @Test
+    void rotatesSigningSecretOnceAndNeverLeaksItToReadOrOutbox() throws Exception {
+        Credentials owner = credentials();
+        String id = register(owner.key(), request(simulatorUrl())).getBody()
+                .path("data").path("endpoint_id").asText();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(owner.key());
+        headers.set("If-Match", "\"1\"");
+        ResponseEntity<JsonNode> rotated = client.exchange("/v1/endpoints/" + id + "/rotate-secret",
+                HttpMethod.POST, new HttpEntity<>(null, headers), JsonNode.class);
+        assertThat(rotated.getStatusCode()).isEqualTo(HttpStatus.OK);
+        String secret = rotated.getBody().path("data").path("signing_secret").asText();
+        assertThat(secret).hasSizeGreaterThan(32);
+        assertThat(rotated.getBody().path("data").path("version").asLong()).isEqualTo(2);
+        assertThat(get(owner.key(), "/v1/endpoints/" + id).getBody().toString()).doesNotContain(secret);
+        assertThat(count("SELECT count(*) FROM endpoints WHERE id = ? AND signing_secret_ciphertext IS NOT NULL",
+                UUID.fromString(id))).isEqualTo(1);
+        assertThat(count("SELECT count(*) FROM control_outbox WHERE organization_id = ? AND payload::text LIKE ?",
+                owner.organizationId(), "%" + secret + "%")).isZero();
+        assertThat(count("SELECT count(*) FROM audit_records WHERE organization_id = ? AND action = 'endpoint.secret_rotated'",
+                owner.organizationId())).isEqualTo(1);
+        assertThat(client.exchange("/v1/endpoints/" + id + "/rotate-secret", HttpMethod.POST,
+                new HttpEntity<>(null, headers), JsonNode.class).getStatusCode())
+                .isEqualTo(HttpStatus.PRECONDITION_FAILED);
+    }
+
+    @Test
+    void preservesCredentialAadVersionsAcrossUnrelatedUpdates() throws Exception {
+        client.getRestTemplate().setRequestFactory(new JdkClientHttpRequestFactory());
+        Credentials owner = credentials();
+        Map<String, Object> body = new HashMap<>(request(simulatorUrl()));
+        body.put("authentication", Map.of("type", "BEARER", "token", "first-token"));
+        String id = register(owner.key(), body).getBody().path("data").path("endpoint_id").asText();
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(owner.key());
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("If-Match", "\"1\"");
+        ResponseEntity<JsonNode> renamed = client.exchange("/v1/endpoints/" + id, HttpMethod.PATCH,
+                new HttpEntity<>(Map.of("name", "New name"), headers), JsonNode.class);
+        assertThat(renamed.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(decryptStored(owner.organizationId(), UUID.fromString(id), "auth_config"))
+                .contains("first-token");
+        assertThat(count("SELECT auth_config_version FROM endpoints WHERE id = ?", UUID.fromString(id)))
+                .isEqualTo(1);
+
+        headers.set("If-Match", "\"2\"");
+        ResponseEntity<JsonNode> replaced = client.exchange("/v1/endpoints/" + id, HttpMethod.PATCH,
+                new HttpEntity<>(Map.of("authentication", Map.of("type", "BEARER", "token", "second-token")),
+                        headers), JsonNode.class);
+        assertThat(replaced.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(decryptStored(owner.organizationId(), UUID.fromString(id), "auth_config"))
+                .contains("second-token").doesNotContain("first-token");
+        assertThat(count("SELECT auth_config_version FROM endpoints WHERE id = ?", UUID.fromString(id)))
+                .isEqualTo(3);
+
+        headers.set("If-Match", "\"3\"");
+        ResponseEntity<JsonNode> rotated = client.exchange("/v1/endpoints/" + id + "/rotate-secret",
+                HttpMethod.POST, new HttpEntity<>(null, headers), JsonNode.class);
+        assertThat(rotated.getStatusCode()).isEqualTo(HttpStatus.OK);
+        String signingSecret = rotated.getBody().path("data").path("signing_secret").asText();
+        headers.set("If-Match", "\"4\"");
+        assertThat(client.exchange("/v1/endpoints/" + id, HttpMethod.PATCH,
+                new HttpEntity<>(Map.of("status", "PAUSED"), headers), JsonNode.class).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+        assertThat(decryptStored(owner.organizationId(), UUID.fromString(id), "signing_secret"))
+                .isEqualTo(signingSecret);
+        assertThat(count("SELECT signing_secret_version FROM endpoints WHERE id = ?", UUID.fromString(id)))
+                .isEqualTo(4);
+    }
+
+    @Test
+    void rejectsPatchThatCollidesWithStoredAuthenticationHeader() throws Exception {
+        client.getRestTemplate().setRequestFactory(new JdkClientHttpRequestFactory());
+        Credentials owner = credentials();
+        Map<String, Object> body = new HashMap<>(request(simulatorUrl()));
+        body.put("authentication", Map.of("type", "STATIC_HEADER", "header_name", "X-Api-Key",
+                "value", "private-token"));
+        String id = register(owner.key(), body).getBody().path("data").path("endpoint_id").asText();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(owner.key());
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("If-Match", "\"1\"");
+        Map<String, Object> destination = Map.of("base_url", simulatorUrl(), "path", "/hook",
+                "query_params", Map.of(), "headers", Map.of("x-api-key", "public"),
+                "metadata", Map.of());
+        ResponseEntity<JsonNode> rejected = client.exchange("/v1/endpoints/" + id, HttpMethod.PATCH,
+                new HttpEntity<>(Map.of("destination", destination), headers), JsonNode.class);
+        assertThat(rejected.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(rejected.getBody().toString()).doesNotContain("private-token");
+        assertThat(count("SELECT version FROM endpoints WHERE id = ?", UUID.fromString(id))).isEqualTo(1);
+    }
+
     private Credentials credentials() {
         HttpHeaders admin = new HttpHeaders();
         admin.setContentType(MediaType.APPLICATION_JSON);
@@ -221,6 +386,12 @@ class EndpointRegistrationIT {
                 new HttpEntity<>(headers), JsonNode.class);
     }
 
+    private ResponseEntity<JsonNode> get(String key, String path) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(key);
+        return client.exchange(path, HttpMethod.GET, new HttpEntity<>(headers), JsonNode.class);
+    }
+
     private Map<String, Object> request(String baseUrl) {
         return request(baseUrl, Map.of("Content-Type", "application/json"),
                 List.of("payment.completed", "payment.failed"), 10000);
@@ -250,6 +421,30 @@ class EndpointRegistrationIT {
             try (var rows = statement.executeQuery()) {
                 rows.next();
                 return rows.getLong(1);
+            }
+        }
+    }
+
+    private String decryptStored(UUID organizationId, UUID endpointId, String field) throws Exception {
+        String prefix = field.equals("auth_config") ? "auth" : "signing";
+        String versionColumn = field.equals("auth_config") ? "auth_config_version" : "signing_secret_version";
+        String sql = "SELECT " + prefix + "_secret_ciphertext";
+        if (field.equals("auth_config")) {
+            sql = "SELECT auth_config_ciphertext";
+        }
+        sql += ", " + prefix + "_wrapped_dek, " + prefix + "_key_version, "
+                + prefix + "_nonce, " + versionColumn + " FROM endpoints WHERE id = ? AND organization_id = ?";
+        try (var connection = DriverManager.getConnection(
+                DATABASE.getJdbcUrl(), DATABASE.getUsername(), DATABASE.getPassword());
+                var statement = connection.prepareStatement(sql)) {
+            statement.setObject(1, endpointId);
+            statement.setObject(2, organizationId);
+            try (var row = statement.executeQuery()) {
+                assertThat(row.next()).isTrue();
+                EncryptedSecret encrypted = new EncryptedSecret(row.getBytes(1), row.getBytes(2),
+                        row.getString(3), row.getBytes(4));
+                return new String(secretCipher.decrypt(organizationId, endpointId, field,
+                        row.getLong(5), encrypted), StandardCharsets.UTF_8);
             }
         }
     }
