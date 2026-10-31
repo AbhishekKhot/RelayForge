@@ -201,13 +201,15 @@ Adapt service names to the actual `compose.yaml`; keep equivalent commands in th
 
 ### D1. Outbox claim/publish/mark algorithm
 
-- [ ] Implement bounded batch claims using row locking/leases (`FOR UPDATE SKIP LOCKED` or the LLD-equivalent), claim token, claim expiry, attempt count, and `available_at`.
-- [ ] Publish each outbox row to the configured Kafka topic with stable message ID, schema version, correlation ID, organization ID, aggregate ID, and partition key.
-- [ ] Mark published only after Kafka acknowledges. If the process crashes after Kafka publish but before DB marking, republish is expected; consumers must be idempotent.
-- [ ] Back off transient broker errors; retain diagnostics without secret data. Never delete unpublished rows as a recovery strategy.
+- [x] Implement bounded batch claims using row locking/leases (`FOR UPDATE SKIP LOCKED` or the LLD-equivalent), claim token, claim expiry, attempt count, and `available_at`.
+- [x] Publish each outbox row to the configured Kafka topic with stable message ID, schema version, correlation ID, organization ID, aggregate ID, and partition key.
+- [x] Mark published only after Kafka acknowledges. If the process crashes after Kafka publish but before DB marking, republish is expected; consumers must be idempotent.
+- [x] Back off transient broker errors; retain diagnostics without secret data. Never delete unpublished rows as a recovery strategy.
 
 **Touches:** `control_outbox`, `ingestion_outbox`, `delivery_outbox`; each owner's publisher, Kafka producer configuration, topic setup.
 **Checkpoint D1:** Publish event while publisher is stopped → outbox remains pending. Start publisher → Kafka receives message and row becomes published. Kill publisher after publish but before marking → duplicate Kafka message is tolerated and no data is lost.
+
+**D1 verification:** [PR #17 CI](https://github.com/AbhishekKhot/RelayForge/actions/runs/41182283541) passed Java 21 `mvn verify`, clean Compose control/delivery publication checks, and ingestion HA publication. PostgreSQL tests cover lock contention, lease recovery, stale tokens, retries, and bounded claims. Publisher tests cover Kafka acknowledgement before marking, stable replay envelopes, bounded backoff, and sanitized failures. Consumer deduplication remains D2.
 
 ### D2. Topic contracts and consumer resilience
 
