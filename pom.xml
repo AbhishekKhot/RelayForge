@@ -22,6 +22,7 @@
         <module>relayforge-outbound-security</module>
         <module>relayforge-db-migration</module>
         <module>relayforge-control-plane</module>
+        <module>relayforge-outbox-support</module>
         <module>relayforge-control-publisher</module>
         <module>relayforge-ingestion</module>
         <module>relayforge-ingestion-publisher</module>
