@@ -99,6 +99,8 @@ The standard single-Postgres Compose stack deliberately returns `503` for authen
 
 `GET /v1/events/{event_id}` requires `events:read` and returns only the authenticated organization's accepted event. Its bounded payload and delivery summary come from ingestion and a credential-protected delivery API read, respectively. Until routing records exist, the summary is `PENDING`; an unavailable delivery read returns `503`. `DELIVERY_INTERNAL_URL` and `EVENT_SUMMARY_CREDENTIAL` come from the ignored `.env`. See the [C2 decision record](docs/decisions/event-query.md).
 
+Control, ingestion, and delivery publishers claim due outbox rows with short PostgreSQL leases and publish their versioned envelopes to Kafka. Each row is marked published only after broker acknowledgement; a crash between acknowledgement and marking can produce the same stable message again. The [D1 decision record](docs/decisions/outbox-publishing.md) describes retry and recovery behavior. Run `scripts/verify-compose.sh` and the ingestion HA checkpoint to verify publication with the local stack.
+
 Run `scripts/verify-compose.sh` for the clean boot checkpoint, dependency failure checks, and restart persistence check. It leaves the stack running. `docker compose down` stops it and retains named volumes. For disposable local data only, `docker compose down -v` deletes the PostgreSQL, Kafka, Redis, and ClickHouse volumes.
 
 ## Navigate the codebase
