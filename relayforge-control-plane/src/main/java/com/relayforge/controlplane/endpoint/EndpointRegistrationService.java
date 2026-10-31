@@ -34,10 +34,12 @@ public final class EndpointRegistrationService {
     private final Clock clock;
     private final EndpointAuthValidator authValidator;
     private final EndpointSecretCipher secretCipher;
+    private final EndpointChangeRecorder changes;
 
     public EndpointRegistrationService(EndpointRepository repository, DestinationPolicy policy,
             TransactionTemplate transactions, ObjectMapper json, Clock clock,
-            EndpointAuthValidator authValidator, EndpointSecretCipher secretCipher) {
+            EndpointAuthValidator authValidator, EndpointSecretCipher secretCipher,
+            EndpointChangeRecorder changes) {
         this.repository = repository;
         this.policy = policy;
         this.transactions = transactions;
@@ -45,6 +47,7 @@ public final class EndpointRegistrationService {
         this.clock = clock;
         this.authValidator = authValidator;
         this.secretCipher = secretCipher;
+        this.changes = changes;
     }
 
     public CreatedEndpoint create(UUID organizationId, EndpointRequest body, String requestId) {
@@ -116,7 +119,8 @@ public final class EndpointRegistrationService {
             for (String eventType : eventTypes) {
                 repository.insertSubscription(UUID.randomUUID(), organizationId, endpointId, eventType);
             }
-            repository.insertAudit(organizationId, endpointId, requestId);
+            repository.insertAudit(organizationId, endpointId, "endpoint.created", requestId);
+            changes.record(organizationId, endpointId);
             return new CreatedEndpoint(endpointId, name.trim(), List.copyOf(eventTypes), createdAt);
         });
     }
