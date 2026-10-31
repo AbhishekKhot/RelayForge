@@ -83,6 +83,10 @@ for topic in relayforge.config.changed.v1 relayforge.event.accepted.v1 \
         echo "Missing Kafka topic $topic" >&2
         exit 1
     fi
+    if ! grep -qx "$topic.quarantine" <<< "$topics"; then
+        echo "Missing Kafka quarantine topic $topic.quarantine" >&2
+        exit 1
+    fi
 done
 
 table="$(docker compose exec -T clickhouse sh -c \
