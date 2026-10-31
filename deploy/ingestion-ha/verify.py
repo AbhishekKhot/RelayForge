@@ -48,12 +48,15 @@ def get(base, path, headers):
         return error.code, json.load(error)
 
 
-def count(table, organization_id):
+def count(table, organization_id, status=None):
     assert table in {"events", "ingestion_outbox"}
+    assert status is None or (table == "ingestion_outbox" and status == "PUBLISHED")
+    status_filter = " AND status = 'PUBLISHED'" if status else ""
     result = run(HA + ["exec", "-T", "ingestion-primary", "sh", "-c",
                        'PGPASSWORD="$POSTGRES_PASSWORD" psql -U "$POSTGRES_USER" '
                        '-d relayforge_ingestion -At'],
-                 input=f"SELECT count(*) FROM {table} WHERE organization_id = '{organization_id}';\n",
+                 input=f"SELECT count(*) FROM {table} WHERE organization_id = '{organization_id}'"
+                       f"{status_filter};\n",
                  capture_output=True)
     return int(result.stdout.strip())
 
@@ -104,6 +107,22 @@ def verify():
     assert status == 409, (status, conflict)
     assert count("events", organization_id) == 1
     assert count("ingestion_outbox", organization_id) == 1
+    for _ in range(30):
+        if count("ingestion_outbox", organization_id, "PUBLISHED") == 1:
+            break
+        time.sleep(2)
+    assert count("ingestion_outbox", organization_id, "PUBLISHED") == 1
+    message = run(HA + ["exec", "-T", "kafka",
+                        "/opt/kafka/bin/kafka-console-consumer.sh",
+                        "--bootstrap-server", "kafka:9092",
+                        "--topic", "relayforge.event.accepted.v1",
+                        "--from-beginning", "--max-messages", "1", "--timeout-ms", "10000"],
+                  capture_output=True).stdout.strip()
+    envelope = json.loads(message)
+    assert envelope["message_id"].startswith("msg_")
+    assert envelope["schema_version"] == 1
+    assert envelope["organization_id"] == organization_id
+    assert envelope["payload"]["event_id"] == first["data"]["event_id"]
     run(HA + ["stop", "ingestion-standby"])
     failed_key = "c1-" + uuid4().hex
     status, failure = post(ingestion, "/v1/events", body,

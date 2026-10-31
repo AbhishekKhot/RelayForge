@@ -10,6 +10,11 @@
     <dependencies>
         <dependency>
             <groupId>com.relayforge</groupId>
+            <artifactId>relayforge-outbox-support</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.relayforge</groupId>
             <artifactId>relayforge-api-support</artifactId>
             <version>${project.version}</version>
         </dependency>

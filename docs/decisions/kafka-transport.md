@@ -5,7 +5,7 @@ Kafka transports committed work; PostgreSQL remains the authority. Every produce
 | Topic | Key | Consumer | Recovery authority |
 |---|---|---|---|
 | `relayforge.config.changed.v1` | `organization_id` | One projector group per delivery shard | Control-plane configuration snapshot and revision |
-| `relayforge.event.accepted.v1` | `event_id` | Global router group; write the locator's delivery shard | Ingestion event/outbox and delivery routing progress |
+| `relayforge.event.accepted.v1` | Opaque event locator | Global router group; write the locator's delivery shard | Ingestion event/outbox and delivery routing progress |
 | `relayforge.delivery.ready.v1` | `delivery_id` | Global worker group; claim the locator's delivery shard | `delivery_work` and day-partitioned delivery row |
 | `relayforge.analytics.delivery-facts.v1` | `fact_id` | Analytics consumer | Delivery attempts/state and delivery outbox |
 

@@ -1304,7 +1304,7 @@ The topics are: - `relayforge.config.changed.v1` -
 `relayforge.analytics.delivery-facts.v1`
 
 Use separate consumer groups for routing, delivery, and analytics. Use
-`event_id` as the key for event routing and `delivery_id` as the key for
+the opaque event locator as the key for event routing and `delivery_id` as the key for
 delivery work. Partition counts should be chosen based on measured
 throughput and desired concurrency; changing keying or partition counts
 can change ordering and is not an ordering guarantee.
