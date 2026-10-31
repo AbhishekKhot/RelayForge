@@ -9,6 +9,10 @@
     <artifactId>relayforge-delivery-api</artifactId>
     <dependencies>
         <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+        <dependency>
             <groupId>com.relayforge</groupId>
             <artifactId>relayforge-db-migration</artifactId>
             <version>${project.version}</version>

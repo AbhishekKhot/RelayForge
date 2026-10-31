@@ -112,4 +112,16 @@ public final class JdbcIngestionRepository implements IngestionRepository {
                 VALUES (?, ?, ?, 'event.accepted.v1', 'relayforge.event.accepted.v1', ?, ?::jsonb)
                 """, organizationId, day, eventId, locator, messageJson);
     }
+
+    @Override
+    public Optional<StoredEvent> findEvent(UUID organizationId, LocalDate day, UUID eventId) {
+        return jdbc.query("""
+                SELECT event_type, schema_version,
+                    CASE WHEN octet_length(payload::text) <= 524288 THEN payload::text END,
+                    occurred_at, accepted_at
+                FROM events WHERE organization_id = ? AND accepted_day = ? AND id = ?
+                """, (row, index) -> new StoredEvent(row.getString(1), row.getInt(2),
+                row.getString(3), row.getTimestamp(4) == null ? null : row.getTimestamp(4).toInstant(),
+                row.getTimestamp(5).toInstant()), organizationId, day, eventId).stream().findFirst();
+    }
 }

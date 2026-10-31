@@ -21,6 +21,7 @@ generated = {
         "REDIS_PASSWORD",
         "CLICKHOUSE_PASSWORD",
         "TRUSTED_PROVISIONING_CREDENTIAL",
+        "EVENT_SUMMARY_CREDENTIAL",
     )
 }
 generated["KAFKA_CLUSTER_ID"] = urlsafe_b64encode(uuid4().bytes).decode().rstrip("=")

@@ -95,6 +95,8 @@ B2 adds encrypted `STATIC_HEADER`, `STATIC_API_KEY`, `BEARER`, `BASIC`, `TOKEN_E
 
 The standard single-Postgres Compose stack deliberately returns `503` for authenticated event publishes. Use the [C1 HA overlay](deploy/ingestion-ha/) and `python3 deploy/ingestion-ha/verify.py` after `scripts/verify-compose.sh` for the standby-backed acceptance checkpoint. `CONTROL_INTERNAL_URL`, `INGESTION_HA_JDBC_URL`, and replication credentials are read from the ignored `.env`. See the [C1 decision record](docs/decisions/event-ingestion.md).
 
+`GET /v1/events/{event_id}` requires `events:read` and returns only the authenticated organization's accepted event. Its bounded payload and delivery summary come from ingestion and a credential-protected delivery API read, respectively. Until routing records exist, the summary is `PENDING`; an unavailable delivery read returns `503`. `DELIVERY_INTERNAL_URL` and `EVENT_SUMMARY_CREDENTIAL` come from the ignored `.env`. See the [C2 decision record](docs/decisions/event-query.md).
+
 Run `scripts/verify-compose.sh` for the clean boot checkpoint, dependency failure checks, and restart persistence check. It leaves the stack running. `docker compose down` stops it and retains named volumes. For disposable local data only, `docker compose down -v` deletes the PostgreSQL, Kafka, Redis, and ClickHouse volumes.
 
 ## Navigate the codebase
