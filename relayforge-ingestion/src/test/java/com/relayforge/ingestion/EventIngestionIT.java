@@ -8,6 +8,7 @@ import java.net.InetSocketAddress;
 import java.sql.DriverManager;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -37,6 +38,8 @@ class EventIngestionIT {
             .withUsername("relayforge")
             .withPassword("relayforge-test");
     private static final HttpServer AUTH;
+    private static final HttpServer DELIVERY;
+    private static final AtomicInteger DELIVERY_STATUS = new AtomicInteger(200);
 
     static {
         try {
@@ -57,6 +60,15 @@ class EventIngestionIT {
                 exchange.close();
             });
             AUTH.start();
+            DELIVERY = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            DELIVERY.createContext("/internal/v1/events", exchange -> {
+                byte[] body = "{\"status\":\"PENDING\",\"target_count\":0,\"delivery_count\":0,\"succeeded_count\":0,\"dead_lettered_count\":0}".getBytes();
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(DELIVERY_STATUS.get(), body.length);
+                exchange.getResponseBody().write(body);
+                exchange.close();
+            });
+            DELIVERY.start();
         } catch (Exception failure) {
             throw new IllegalStateException(failure);
         }
@@ -71,6 +83,8 @@ class EventIngestionIT {
         registry.add("relayforge.database.username", DATABASE::getUsername);
         registry.add("relayforge.database.password", DATABASE::getPassword);
         registry.add("relayforge.control.internal-url", () -> "http://127.0.0.1:" + AUTH.getAddress().getPort());
+        registry.add("relayforge.delivery.internal-url", () -> "http://127.0.0.1:" + DELIVERY.getAddress().getPort());
+        registry.add("relayforge.event-summary.credential", () -> "test-summary-credential-01234567890123456789");
         registry.add("relayforge.ingestion.acceptance-enabled", () -> "true");
     }
 
@@ -88,6 +102,36 @@ class EventIngestionIT {
 
     @Autowired
     private IngestionRepository repository;
+
+    @Test
+    void ownerReadsAcceptanceButOtherTenantAndInvalidLocatorCannotRead() {
+        ResponseEntity<JsonNode> created = publish("good-key", "query-" + UUID.randomUUID(),
+                "payment.completed", Map.of("amount", 1500));
+        assertThat(created.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+        String locator = created.getBody().path("data").path("event_id").asText();
+        ResponseEntity<JsonNode> owner = query("good-key", locator);
+        assertThat(owner.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(owner.getBody().path("data").path("event_id").asText()).isEqualTo(locator);
+        assertThat(owner.getBody().path("data").path("payload").path("amount").asInt()).isEqualTo(1500);
+        assertThat(owner.getBody().path("data").path("delivery_summary").path("status").asText())
+                .isEqualTo("PENDING");
+        assertThat(query("expiry-key", locator).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(query("good-key", "evt_invalid").getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void doesNotInventDeliveryStateWhenSummaryServiceIsUnavailable() {
+        ResponseEntity<JsonNode> created = publish("good-key", "query-" + UUID.randomUUID(),
+                "payment.completed", Map.of());
+        assertThat(created.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+        try {
+            DELIVERY_STATUS.set(503);
+            assertThat(query("good-key", created.getBody().path("data").path("event_id").asText())
+                    .getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+        } finally {
+            DELIVERY_STATUS.set(200);
+        }
+    }
 
     @Test
     void acceptsOnceAndWritesEventAndOutboxAtomically() throws Exception {
@@ -204,6 +248,13 @@ class EventIngestionIT {
         return client.exchange("/v1/events", HttpMethod.POST,
                 new HttpEntity<>(Map.of("event_type", type, "schema_version", 1, "data", data), headers),
                 JsonNode.class);
+    }
+
+    private ResponseEntity<JsonNode> query(String apiKey, String locator) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(apiKey);
+        return client.exchange("/v1/events/" + locator, HttpMethod.GET,
+                new HttpEntity<>(headers), JsonNode.class);
     }
 
     private long count(String sql, Object... values) throws Exception {

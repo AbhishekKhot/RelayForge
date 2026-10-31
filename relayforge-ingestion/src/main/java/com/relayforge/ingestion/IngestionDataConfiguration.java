@@ -3,10 +3,13 @@ package com.relayforge.ingestion;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.relayforge.ingestion.event.ControlPlaneAuthenticator;
 import com.relayforge.ingestion.event.DurabilityGate;
+import com.relayforge.ingestion.event.DeliverySummaryClient;
+import com.relayforge.ingestion.event.EventQueryService;
 import com.relayforge.ingestion.event.EventIngestionService;
 import com.relayforge.ingestion.event.EventRequestParser;
 import com.relayforge.ingestion.event.IngestionRepository;
 import com.relayforge.ingestion.event.JdbcIngestionRepository;
+import com.relayforge.ingestion.event.HttpDeliverySummaryClient;
 import com.relayforge.ingestion.event.OrganizationAuthenticator;
 import com.relayforge.ingestion.event.PostgresDurabilityGate;
 import com.zaxxer.hikari.HikariConfig;
@@ -83,6 +86,21 @@ public class IngestionDataConfiguration {
             TransactionTemplate ingestionTransactionTemplate, ObjectMapper json, Environment environment) {
         return new EventIngestionService(repository, durability, ingestionTransactionTemplate, json,
                 environment.getProperty("relayforge.ingestion.map-epoch", Long.class, 1L),
+                environment.getProperty("relayforge.ingestion.shard-id", "ing-a"),
+                environment.getProperty("relayforge.ingestion.delivery-shard-id", "dlv-a"));
+    }
+
+    @Bean
+    DeliverySummaryClient deliverySummaryClient(Environment environment, ObjectMapper json) {
+        return new HttpDeliverySummaryClient(
+                URI.create(environment.getRequiredProperty("relayforge.delivery.internal-url")),
+                environment.getRequiredProperty("relayforge.event-summary.credential"), json);
+    }
+
+    @Bean
+    EventQueryService eventQueryService(IngestionRepository repository, DeliverySummaryClient summaries,
+            ObjectMapper json, Environment environment) {
+        return new EventQueryService(repository, summaries, json,
                 environment.getProperty("relayforge.ingestion.shard-id", "ing-a"),
                 environment.getProperty("relayforge.ingestion.delivery-shard-id", "dlv-a"));
     }
