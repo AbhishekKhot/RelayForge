@@ -80,6 +80,7 @@ class OrganizationProvisioningIT {
         ResponseEntity<JsonNode> accepted = get("/v1/auth/check", key);
         assertThat(accepted.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(accepted.getBody().path("organization_id").asText()).isEqualTo(organizationId);
+        assertThat(get("/v1/auth/check?scope=events:read", key).getStatusCode()).isEqualTo(HttpStatus.OK);
 
         ResponseEntity<JsonNode> wrong = get("/v1/auth/check", key + "wrong");
         assertThat(wrong.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
@@ -130,6 +131,10 @@ class OrganizationProvisioningIT {
         String readOnlyKey = rotated.getBody().path("data").path("api_key").asText();
         assertThat(get("/v1/auth/check", initialKey).getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
         assertThat(get("/v1/auth/check", readOnlyKey).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(get("/v1/auth/check?scope=events:read", readOnlyKey).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+        assertThat(get("/v1/auth/check?scope=endpoints:write", readOnlyKey).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN);
 
         String readOnlyId = readOnlyKey.split("_")[2];
         ResponseEntity<JsonNode> second = post("/v1/api-keys/" + readOnlyId + "/rotate",

@@ -17,6 +17,7 @@ public final class ControlPlaneAuthenticator implements OrganizationAuthenticato
     private final HttpClient http;
     private final ObjectMapper json;
     private final URI checkUrl;
+    private final URI readCheckUrl;
 
     public ControlPlaneAuthenticator(URI controlUrl, ObjectMapper json) {
         if (controlUrl == null || !controlUrl.isAbsolute() || controlUrl.getHost() == null
@@ -28,14 +29,24 @@ public final class ControlPlaneAuthenticator implements OrganizationAuthenticato
                 .followRedirects(HttpClient.Redirect.NEVER).build();
         this.json = json;
         this.checkUrl = controlUrl.resolve("/v1/auth/check");
+        this.readCheckUrl = controlUrl.resolve("/v1/auth/check?scope=events:read");
     }
 
     @Override
     public AuthenticatedOrganization authenticate(String authorization) {
+        return authenticate(authorization, checkUrl);
+    }
+
+    @Override
+    public AuthenticatedOrganization authenticateForRead(String authorization) {
+        return authenticate(authorization, readCheckUrl);
+    }
+
+    private AuthenticatedOrganization authenticate(String authorization, URI url) {
         if (authorization == null || !authorization.startsWith("Bearer ") || authorization.length() > 135) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
         }
-        HttpRequest request = HttpRequest.newBuilder(checkUrl).timeout(Duration.ofSeconds(3))
+        HttpRequest request = HttpRequest.newBuilder(url).timeout(Duration.ofSeconds(3))
                 .header("Authorization", authorization).GET().build();
         try {
             HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
