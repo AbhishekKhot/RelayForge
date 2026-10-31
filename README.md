@@ -113,6 +113,7 @@ RelayForge/
 ├── relayforge-db-migration/         Conditional owner Flyway startup
 ├── relayforge-schema-tests/         PostgreSQL 17 migration checks
 ├── relayforge-contracts/            Cross-service message contracts
+├── relayforge-consumer-support/     Bounded Kafka poll and recovery support
 ├── relayforge-control-plane/        Accounts, keys, endpoints, subscriptions
 ├── relayforge-control-publisher/    Configuration outbox publisher
 ├── relayforge-ingestion/            Event acceptance and idempotency

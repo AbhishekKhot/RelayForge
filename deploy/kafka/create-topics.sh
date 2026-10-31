@@ -6,10 +6,12 @@ for topic in \
     relayforge.event.accepted.v1 \
     relayforge.delivery.ready.v1 \
     relayforge.analytics.delivery-facts.v1; do
-    /opt/kafka/bin/kafka-topics.sh \
-        --bootstrap-server "$KAFKA_BOOTSTRAP_SERVERS" \
-        --create --if-not-exists --topic "$topic" \
-        --partitions 1 --replication-factor 1 \
-        --config retention.ms=86400000 \
-        --config cleanup.policy=delete
+    for suffix in '' '.quarantine'; do
+        /opt/kafka/bin/kafka-topics.sh \
+            --bootstrap-server "$KAFKA_BOOTSTRAP_SERVERS" \
+            --create --if-not-exists --topic "$topic$suffix" \
+            --partitions 1 --replication-factor 1 \
+            --config retention.ms=86400000 \
+            --config cleanup.policy=delete
+    done
 done
