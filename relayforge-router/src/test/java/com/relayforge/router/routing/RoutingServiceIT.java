@@ -94,6 +94,8 @@ class RoutingServiceIT {
         assertThat(count("delivery_outbox", organization)).isEqualTo(2);
         assertThat(jdbc.queryForObject("SELECT status FROM routing_progress WHERE organization_id = ?",
                 String.class, organization)).isEqualTo("ROUTED");
+        assertThat(jdbc.queryForObject("SELECT event_locator FROM routing_progress WHERE organization_id = ?",
+                String.class, organization)).isEqualTo(accepted.eventLocator());
 
         jdbc.update("UPDATE endpoint_projection SET status = 'DISABLED' WHERE organization_id = ? AND endpoint_id = ?",
                 organization, second);
@@ -145,7 +147,8 @@ class RoutingServiceIT {
     private static VerifiedEvent accepted(UUID organization, UUID event, String eventType) {
         LocalDate day = LocalDate.now(ZoneOffset.UTC);
         Instant acceptedAt = day.atStartOfDay().toInstant(ZoneOffset.UTC).plusSeconds(1);
-        return new VerifiedEvent(organization, event, day, acceptedAt, eventType, "ing-a", "dlv-a");
+        return new VerifiedEvent(organization, event, "evt_" + event.toString().replace("-", ""),
+                day, acceptedAt, eventType, "ing-a", "dlv-a");
     }
 
     private static int count(String table, UUID organization) {

@@ -21,7 +21,7 @@ class EventRoutingHandlerTest {
     @Test
     void routesOnlyAfterVerificationAndProjectionReadiness() {
         UUID organization = UUID.randomUUID();
-        VerifiedEvent event = new VerifiedEvent(organization, UUID.randomUUID(),
+        VerifiedEvent event = new VerifiedEvent(organization, UUID.randomUUID(), "evt_test",
                 LocalDate.parse("2026-11-02"), Instant.parse("2026-11-02T10:00:00Z"),
                 "order.created", "ing-a", "dlv-a");
         ValidatedEnvelope envelope = mock(ValidatedEnvelope.class);

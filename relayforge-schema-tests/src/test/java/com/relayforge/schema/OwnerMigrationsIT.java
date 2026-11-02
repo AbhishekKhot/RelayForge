@@ -103,7 +103,7 @@ class OwnerMigrationsIT {
         int expected = switch (owner) {
             case "control-plane" -> 4;
             case "ingestion" -> 2;
-            case "delivery" -> 2;
+            case "delivery" -> 3;
             default -> 1;
         };
         assertThat(flyway.migrate().migrationsExecuted).isEqualTo(expected);

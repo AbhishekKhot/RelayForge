@@ -6,6 +6,7 @@ import com.relayforge.ingestion.event.DurabilityGate;
 import com.relayforge.ingestion.event.DeliverySummaryClient;
 import com.relayforge.ingestion.event.EventQueryService;
 import com.relayforge.ingestion.event.RoutingEventLookupService;
+import com.relayforge.ingestion.event.DeliveryPayloadLookupService;
 import com.relayforge.ingestion.event.EventIngestionService;
 import com.relayforge.ingestion.event.EventRequestParser;
 import com.relayforge.ingestion.event.IngestionRepository;
@@ -61,6 +62,12 @@ public class IngestionDataConfiguration {
     @Bean
     IngestionRepository ingestionRepository(JdbcTemplate ingestionJdbcTemplate) {
         return new JdbcIngestionRepository(ingestionJdbcTemplate);
+    }
+
+    @Bean
+    DeliveryPayloadLookupService deliveryPayloadLookupService(RoutingEventLookupService references,
+            IngestionRepository repository, ObjectMapper json) {
+        return new DeliveryPayloadLookupService(references, repository, json);
     }
 
     @Bean

@@ -17,7 +17,9 @@ import com.relayforge.outbound.ValidatedDestination;
 import java.time.Clock;
 import java.time.Instant;
 import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -35,11 +37,12 @@ public final class EndpointRegistrationService {
     private final EndpointAuthValidator authValidator;
     private final EndpointSecretCipher secretCipher;
     private final EndpointChangeRecorder changes;
+    private final SecureRandom random;
 
     public EndpointRegistrationService(EndpointRepository repository, DestinationPolicy policy,
             TransactionTemplate transactions, ObjectMapper json, Clock clock,
             EndpointAuthValidator authValidator, EndpointSecretCipher secretCipher,
-            EndpointChangeRecorder changes) {
+            EndpointChangeRecorder changes, SecureRandom random) {
         this.repository = repository;
         this.policy = policy;
         this.transactions = transactions;
@@ -48,6 +51,7 @@ public final class EndpointRegistrationService {
         this.authValidator = authValidator;
         this.secretCipher = secretCipher;
         this.changes = changes;
+        this.random = random;
     }
 
     public CreatedEndpoint create(UUID organizationId, EndpointRequest body, String requestId) {
@@ -111,17 +115,30 @@ public final class EndpointRegistrationService {
         String queryJson = toJson(destination.queryParams());
         String headersJson = toJson(validated.headers());
         EncryptedSecret storedAuth = encryptedAuth;
+        byte[] randomBytes = new byte[32];
+        random.nextBytes(randomBytes);
+        String signingSecret = Base64.getUrlEncoder().withoutPadding().encodeToString(randomBytes);
+        Arrays.fill(randomBytes, (byte) 0);
+        byte[] secretBytes = signingSecret.getBytes(StandardCharsets.US_ASCII);
+        EncryptedSecret storedSigning;
+        try {
+            storedSigning = secretCipher.encrypt(organizationId, endpointId, "signing_secret", 1,
+                    secretBytes);
+        } finally {
+            Arrays.fill(secretBytes, (byte) 0);
+        }
         return transactions.execute(status -> {
             repository.insert(endpointId, organizationId, name.trim(), destination.baseUrl(),
                     destination.path(), queryJson, headersJson, metadataJson,
                     deliveryPolicy.timeoutMs(), deliveryPolicy.maxConcurrency(), deliveryPolicy.maxAttempts(),
-                    createdAt, authentication.type(), storedAuth);
+                    createdAt, authentication.type(), storedAuth, storedSigning);
             for (String eventType : eventTypes) {
                 repository.insertSubscription(UUID.randomUUID(), organizationId, endpointId, eventType);
             }
             repository.insertAudit(organizationId, endpointId, "endpoint.created", requestId);
             changes.record(organizationId, endpointId);
-            return new CreatedEndpoint(endpointId, name.trim(), List.copyOf(eventTypes), createdAt);
+            return new CreatedEndpoint(endpointId, name.trim(), List.copyOf(eventTypes), createdAt,
+                    signingSecret);
         });
     }
 
@@ -146,6 +163,11 @@ public final class EndpointRegistrationService {
         return new ResponseStatusException(HttpStatus.BAD_REQUEST);
     }
 
-    public record CreatedEndpoint(UUID id, String name, List<String> eventTypes, Instant createdAt) {
+    public record CreatedEndpoint(UUID id, String name, List<String> eventTypes, Instant createdAt,
+            String signingSecret) {
+        @Override
+        public String toString() {
+            return "CreatedEndpoint[id=" + id + ", signingSecret=[REDACTED]]";
+        }
     }
 }

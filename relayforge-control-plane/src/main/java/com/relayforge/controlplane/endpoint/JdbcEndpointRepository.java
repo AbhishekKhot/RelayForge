@@ -26,19 +26,23 @@ public final class JdbcEndpointRepository implements EndpointRepository {
     public void insert(UUID id, UUID organizationId, String name, String baseUrl, String path,
             String queryJson, String headersJson, String metadataJson,
             int timeoutMs, int maxConcurrency, int maxAttempts, Instant createdAt,
-            String authType, EncryptedSecret authConfig) {
+            String authType, EncryptedSecret authConfig, EncryptedSecret signingSecret) {
         jdbc.update("""
                 INSERT INTO endpoints (id, organization_id, name, base_url, path, query_params, headers,
                   metadata, auth_type, auth_config_ciphertext, auth_wrapped_dek, auth_key_version,
-                  auth_nonce, auth_config_version, timeout_ms, max_concurrency, max_attempts, created_at)
-                VALUES (?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  auth_nonce, auth_config_version, timeout_ms, max_concurrency, max_attempts, created_at,
+                  signing_secret_ciphertext, signing_wrapped_dek, signing_key_version,
+                  signing_nonce, signing_secret_version)
+                VALUES (?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, id, organizationId, name, baseUrl, path, queryJson, headersJson, metadataJson,
                 authType, authConfig == null ? null : authConfig.ciphertext(),
                 authConfig == null ? null : authConfig.wrappedDek(),
                 authConfig == null ? null : authConfig.keyVersion(),
                 authConfig == null ? null : authConfig.nonce(),
                 authConfig == null ? null : 1L,
-                timeoutMs, maxConcurrency, maxAttempts, Timestamp.from(createdAt));
+                timeoutMs, maxConcurrency, maxAttempts, Timestamp.from(createdAt),
+                signingSecret.ciphertext(), signingSecret.wrappedDek(), signingSecret.keyVersion(),
+                signingSecret.nonce(), 1L);
     }
 
     @Override

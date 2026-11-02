@@ -6,7 +6,7 @@ import java.time.ZoneOffset;
 import java.util.Objects;
 import java.util.UUID;
 
-public record VerifiedEvent(UUID organizationId, UUID eventId, LocalDate acceptedDay,
+public record VerifiedEvent(UUID organizationId, UUID eventId, String eventLocator, LocalDate acceptedDay,
         Instant acceptedAt, String eventType, String ingestionShardId, String deliveryShardId) {
     public VerifiedEvent {
         Objects.requireNonNull(organizationId);
@@ -14,6 +14,7 @@ public record VerifiedEvent(UUID organizationId, UUID eventId, LocalDate accepte
         Objects.requireNonNull(acceptedDay);
         Objects.requireNonNull(acceptedAt);
         if (!acceptedDay.equals(acceptedAt.atZone(ZoneOffset.UTC).toLocalDate())
+                || eventLocator == null || !eventLocator.matches("evt_[A-Za-z0-9_-]{1,296}")
                 || eventType == null || eventType.isBlank() || eventType.length() > 200
                 || ingestionShardId == null || ingestionShardId.isBlank()
                 || deliveryShardId == null || deliveryShardId.isBlank()) {

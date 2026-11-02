@@ -178,6 +178,19 @@ public final class JdbcDeliveryLeaseRepository implements DeliveryLeaseRepositor
                     """, next, Timestamp.from(now), work.day(), work.deliveryId(),
                     work.organizationId(), work.token());
             requirePair(changedWork, changedDelivery);
+            jdbc.update("""
+                    UPDATE delivery_attempts SET outcome = 'UNKNOWN', finished_at = clock_timestamp(),
+                        error_code = 'LEASE_EXPIRED'
+                    WHERE accepted_day = ? AND delivery_id = ? AND organization_id = ?
+                        AND outcome = 'IN_PROGRESS'
+                    """, work.day(), work.deliveryId(), work.organizationId());
+            jdbc.update("""
+                    INSERT INTO delivery_outbox (organization_id, accepted_day, event_id,
+                        delivery_id, message_type, topic, partition_key, payload)
+                    VALUES (?, ?, ?, ?, 'delivery.ready.v1', 'relayforge.delivery.ready.v1', ?,
+                        jsonb_build_object('delivery_id', ?::text))
+                    """, work.organizationId(), work.day(), delivery.eventId(), work.deliveryId(),
+                    work.deliveryId().toString(), work.deliveryId().toString());
         }
         return expired.size();
     }
@@ -192,10 +205,10 @@ public final class JdbcDeliveryLeaseRepository implements DeliveryLeaseRepositor
 
     private Delivery lockDelivery(LocalDate day, UUID deliveryId) {
         return jdbc.query("""
-                SELECT status, version, lease_token, attempt_count FROM deliveries
+                SELECT status, version, lease_token, attempt_count, event_id FROM deliveries
                 WHERE accepted_day = ? AND id = ? FOR UPDATE
                 """, (row, index) -> new Delivery(row.getString(1), row.getLong(2),
-                row.getObject(3, UUID.class), row.getInt(4)), day, deliveryId)
+                row.getObject(3, UUID.class), row.getInt(4), row.getObject(5, UUID.class)), day, deliveryId)
                 .stream().findFirst().orElseThrow(() -> new IllegalStateException("Delivery missing"));
     }
 
@@ -213,7 +226,7 @@ public final class JdbcDeliveryLeaseRepository implements DeliveryLeaseRepositor
     private record Work(LocalDate day, UUID organizationId, UUID endpointId, UUID token) {
     }
 
-    private record Delivery(String status, long version, UUID token, int attemptCount) {
+    private record Delivery(String status, long version, UUID token, int attemptCount, UUID eventId) {
     }
 
     private record Recovery(UUID deliveryId, LocalDate day, UUID organizationId, UUID token) {

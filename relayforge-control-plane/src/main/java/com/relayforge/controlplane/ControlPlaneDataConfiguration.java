@@ -11,6 +11,9 @@ import com.relayforge.controlplane.endpoint.JdbcEndpointRepository;
 import com.relayforge.controlplane.endpoint.ConfigurationSnapshotRepository;
 import com.relayforge.controlplane.endpoint.JdbcConfigurationSnapshotRepository;
 import com.relayforge.controlplane.endpoint.ConfigurationSnapshotService;
+import com.relayforge.controlplane.endpoint.DeliveryEndpointRepository;
+import com.relayforge.controlplane.endpoint.JdbcDeliveryEndpointRepository;
+import com.relayforge.controlplane.endpoint.DeliveryEndpointService;
 import com.relayforge.controlplane.endpoint.auth.EndpointAuthValidator;
 import com.relayforge.controlplane.endpoint.auth.EndpointSecretCipher;
 import com.relayforge.controlplane.endpoint.auth.EndpointKeyCheckService;
@@ -112,6 +115,17 @@ public class ControlPlaneDataConfiguration {
     }
 
     @Bean
+    DeliveryEndpointRepository deliveryEndpointRepository(JdbcTemplate controlJdbcTemplate) {
+        return new JdbcDeliveryEndpointRepository(controlJdbcTemplate);
+    }
+
+    @Bean
+    DeliveryEndpointService deliveryEndpointService(DeliveryEndpointRepository repository,
+            EndpointSecretCipher cipher, ObjectMapper objectMapper) {
+        return new DeliveryEndpointService(repository, cipher, objectMapper);
+    }
+
+    @Bean
     EndpointAuthValidator endpointAuthValidator(DestinationPolicy policy) {
         return new EndpointAuthValidator(policy);
     }
@@ -135,7 +149,8 @@ public class ControlPlaneDataConfiguration {
             EndpointAuthValidator authValidator, EndpointSecretCipher secretCipher,
             EndpointChangeRecorder changes) {
         return new EndpointRegistrationService(repository, policy, controlTransactionTemplate,
-                objectMapper, Clock.systemUTC(), authValidator, secretCipher, changes);
+                objectMapper, Clock.systemUTC(), authValidator, secretCipher, changes,
+                new SecureRandom());
     }
 
     @Bean

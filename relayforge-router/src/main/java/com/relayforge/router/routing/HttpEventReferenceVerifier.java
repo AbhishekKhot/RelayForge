@@ -79,7 +79,7 @@ public final class HttpEventReferenceVerifier {
             }
             LocalDate day = LocalDate.parse(text(found, "accepted_day"));
             Instant acceptedAt = Instant.parse(text(found, "accepted_at"));
-            return new VerifiedEvent(envelope.organizationId(), uuid(found, "event_id"), day,
+            return new VerifiedEvent(envelope.organizationId(), uuid(found, "event_id"), locator, day,
                     acceptedAt, text(found, "event_type"), text(payload, "ingestion_shard_id"),
                     deliveryShardId);
         } catch (IOException unavailable) {

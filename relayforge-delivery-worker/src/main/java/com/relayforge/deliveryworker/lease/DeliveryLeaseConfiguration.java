@@ -2,11 +2,22 @@ package com.relayforge.deliveryworker.lease;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.relayforge.deliveryworker.DeliveryKafkaLifecycle;
+import com.relayforge.deliveryworker.DeliveryProcessor;
+import com.relayforge.deliveryworker.http.DeliveryReferenceClient;
+import com.relayforge.deliveryworker.http.WebhookRequestFactory;
+import com.relayforge.outbound.DestinationPolicy;
+import com.relayforge.outbound.SafeWebhookClient;
+import java.net.InetAddress;
+import java.net.URI;
+import java.time.Clock;
 import javax.sql.DataSource;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.JdbcTransactionManager;
 import org.springframework.scheduling.annotation.EnableScheduling;
@@ -55,5 +66,54 @@ public class DeliveryLeaseConfiguration {
     @Bean
     LeaseRecoveryService leaseRecoveryService(DeliveryClaimService claims) {
         return new LeaseRecoveryService(claims);
+    }
+
+    @Bean
+    DeliveryAttemptService deliveryAttemptService(JdbcTemplate deliveryWorkerJdbcTemplate,
+            DataSource deliveryWorkerDataSource) {
+        TransactionTemplate transactions = new TransactionTemplate(
+                new JdbcTransactionManager(deliveryWorkerDataSource));
+        transactions.setTimeout(5);
+        return new DeliveryAttemptService(deliveryWorkerJdbcTemplate, transactions);
+    }
+
+    @Bean
+    DeliveryReferenceClient deliveryReferenceClient(Environment environment, ObjectMapper json) {
+        return new DeliveryReferenceClient(
+                URI.create(environment.getRequiredProperty("relayforge.control.internal-url")),
+                URI.create(environment.getRequiredProperty("relayforge.ingestion.internal-url")),
+                environment.getRequiredProperty("relayforge.delivery.config-credential"),
+                environment.getRequiredProperty("relayforge.delivery.payload-credential"), json);
+    }
+
+    @Bean
+    DestinationPolicy deliveryDestinationPolicy(Environment environment) {
+        boolean local = environment.acceptsProfiles(Profiles.of("local"));
+        String simulator = environment.getProperty("relayforge.webhook.simulator-url");
+        if (local && (simulator == null || simulator.isBlank())) {
+            throw new IllegalStateException("Local webhook simulator URL is required");
+        }
+        return new DestinationPolicy(InetAddress::getAllByName, local,
+                simulator == null ? null : URI.create(simulator));
+    }
+
+    @Bean(destroyMethod = "close")
+    SafeWebhookClient deliveryWebhookClient(DestinationPolicy policy) {
+        return new SafeWebhookClient(policy);
+    }
+
+    @Bean
+    DeliveryProcessor deliveryProcessor(DeliveryClaimService claims, DeliveryAttemptService attempts,
+            DeliveryReferenceClient references, DestinationPolicy policy,
+            SafeWebhookClient client, ObjectMapper json) {
+        return new DeliveryProcessor(claims, attempts, references, new WebhookRequestFactory(json),
+                policy, client, Clock.systemUTC(), "worker-" + java.util.UUID.randomUUID());
+    }
+
+    @Bean
+    DeliveryKafkaLifecycle deliveryKafkaLifecycle(Environment environment, ObjectMapper json,
+            DeliveryProcessor processor) {
+        return new DeliveryKafkaLifecycle(
+                environment.getRequiredProperty("relayforge.kafka.bootstrap-servers"), json, processor);
     }
 }
