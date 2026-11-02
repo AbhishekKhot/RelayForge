@@ -131,6 +131,8 @@ class DeliveryClaimServiceIT {
                 String.class, delivery)).isEqualTo("SUCCEEDED");
         assertThat(jdbc.queryForObject("SELECT http_status FROM delivery_attempts WHERE delivery_id = ?",
                 Integer.class, delivery)).isEqualTo(204);
+        assertThat(jdbc.queryForObject("SELECT duration_ms FROM delivery_attempts WHERE delivery_id = ?",
+                Integer.class, delivery)).isNotNegative();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_work WHERE delivery_id = ?",
                 Integer.class, delivery)).isZero();
     }
@@ -158,6 +160,23 @@ class DeliveryClaimServiceIT {
                 String.class, delivery)).isEqualTo("RETRY_SCHEDULED");
         assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_outbox WHERE delivery_id = ?",
                 Integer.class, delivery)).isEqualTo(1);
+    }
+
+    @Test
+    void recoveryMarksUnfinishedAttemptUnknownAndConsumesItsSlot() {
+        UUID delivery = due(UUID.randomUUID());
+        DeliveryClaimService.Lease old = claims.claim(delivery, "worker-crashed", 2, 20).orElseThrow();
+        DeliveryAttemptService.Attempt unfinished = attempts.reserve(old, 5);
+        jdbc.update("UPDATE delivery_work SET lease_expires_at = clock_timestamp() - interval '1 second' "
+                + "WHERE delivery_id = ?", delivery);
+        jdbc.update("UPDATE deliveries SET lease_expires_at = clock_timestamp() - interval '1 second' "
+                + "WHERE id = ?", delivery);
+        assertThat(claims.recoverExpired(10)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT outcome FROM delivery_attempts WHERE id = ?",
+                String.class, unfinished.id())).isEqualTo("UNKNOWN");
+        DeliveryClaimService.Lease renewed = claims.claim(delivery, "worker-recovered", 2, 20)
+                .orElseThrow();
+        assertThat(attempts.reserve(renewed, 5).number()).isEqualTo(2);
     }
 
     @Test

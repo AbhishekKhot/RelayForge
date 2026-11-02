@@ -39,6 +39,7 @@ class DeliverySummaryIT {
         registry.add("relayforge.database.username", DATABASE::getUsername);
         registry.add("relayforge.database.password", DATABASE::getPassword);
         registry.add("relayforge.event-summary.credential", () -> CREDENTIAL);
+        registry.add("relayforge.control.internal-url", () -> "http://127.0.0.1:1");
     }
 
     @Autowired
