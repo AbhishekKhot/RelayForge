@@ -27,21 +27,23 @@ public final class DeliveryReplayService {
         this.clock = Objects.requireNonNull(clock);
     }
 
-    public ReplayResult replay(UUID organization, UUID sourceId, String key, String reason, String requestId) {
-        if (organization == null || sourceId == null || key == null || key.isBlank()
+    public ReplayResult replay(UUID organization, UUID actorKeyId, UUID sourceId, String key,
+            String reason, String requestId) {
+        if (organization == null || actorKeyId == null || sourceId == null || key == null || key.isBlank()
                 || key.length() > 255 || !key.equals(key.trim()) || key.chars().anyMatch(Character::isISOControl)
                 || reason != null && (reason.isBlank() || reason.length() > 500)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
         }
         byte[] hash = hash(reason);
         try {
-            return transactions.execute(status -> create(organization, sourceId, key, hash, reason, requestId));
+            return transactions.execute(status -> create(organization, actorKeyId,
+                    sourceId, key, hash, reason, requestId));
         } catch (DataAccessException unavailable) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE);
         }
     }
 
-    private ReplayResult create(UUID organization, UUID sourceId, String key, byte[] hash,
+    private ReplayResult create(UUID organization, UUID actorKeyId, UUID sourceId, String key, byte[] hash,
             String reason, String requestId) {
         List<Source> sources = jdbc.query("""
                 SELECT delivery.accepted_day, delivery.event_id, delivery.endpoint_id,
@@ -107,15 +109,16 @@ public final class DeliveryReplayService {
                 source.subscription(), generation);
         jdbc.update("""
                 INSERT INTO replay_requests (accepted_day, organization_id, original_delivery_id,
-                    replay_delivery_id, replay_key, request_hash, reason)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, source.day(), organization, sourceId, replayId, key, hash, reason);
+                    replay_delivery_id, replay_key, request_hash, requested_by_key_id, reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, source.day(), organization, sourceId, replayId, key, hash, actorKeyId, reason);
         jdbc.update("""
                 INSERT INTO delivery_audit_records (accepted_day, organization_id, delivery_id,
-                    action, request_id, details)
-                VALUES (?, ?, ?, 'delivery.replayed', ?, jsonb_build_object(
+                    actor_key_id, action, request_id, details)
+                VALUES (?, ?, ?, ?, 'delivery.replayed', ?, jsonb_build_object(
                     'original_delivery_id', ?::text, 'generation', ?::integer))
-                """, source.day(), organization, replayId, requestId, sourceId.toString(), generation);
+                """, source.day(), organization, replayId, actorKeyId, requestId,
+                sourceId.toString(), generation);
         jdbc.update("""
                 INSERT INTO delivery_work (delivery_id, accepted_day, organization_id, endpoint_id,
                     status, event_expires_at, next_attempt_at)

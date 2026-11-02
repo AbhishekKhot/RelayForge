@@ -36,14 +36,14 @@ public final class DeliveryApiAuthenticator {
     }
 
     public UUID authenticate(String authorization) {
-        return authenticate(authorization, readCheckUrl);
+        return authenticate(authorization, readCheckUrl).organizationId();
     }
 
-    public UUID authenticateReplay(String authorization) {
+    public AuthorizedKey authenticateReplay(String authorization) {
         return authenticate(authorization, replayCheckUrl);
     }
 
-    private UUID authenticate(String authorization, URI checkUrl) {
+    private AuthorizedKey authenticate(String authorization, URI checkUrl) {
         if (authorization == null || !authorization.startsWith("Bearer ")
                 || authorization.length() > 135) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
@@ -76,12 +76,23 @@ public final class DeliveryApiAuthenticator {
             if (!organization.toString().equals(value)) {
                 throw new IllegalArgumentException("Invalid organization identifier");
             }
-            return organization;
+            String keyValue = parsed.path("key_id").asText("");
+            if (checkUrl.equals(replayCheckUrl)) {
+                UUID keyId = UUID.fromString(keyValue);
+                if (!keyId.toString().equals(keyValue)) {
+                    throw new IllegalArgumentException("Invalid key identifier");
+                }
+                return new AuthorizedKey(organization, keyId);
+            }
+            return new AuthorizedKey(organization, null);
         } catch (IOException | IllegalArgumentException failure) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE);
         }
+    }
+
+    public record AuthorizedKey(UUID organizationId, UUID keyId) {
     }
 }

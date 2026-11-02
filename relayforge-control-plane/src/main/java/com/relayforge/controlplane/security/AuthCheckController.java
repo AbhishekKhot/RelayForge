@@ -22,6 +22,7 @@ public final class AuthCheckController {
     public Map<String, Object> check(HttpServletRequest request) {
         UUID organizationId = (UUID) request.getAttribute(ControlPlaneAuthFilter.ORGANIZATION_ATTRIBUTE);
         return Map.of("organization_id", organizationId,
+                "key_id", request.getAttribute(ControlPlaneAuthFilter.KEY_ATTRIBUTE),
                 "events_per_minute", organizations.eventRateLimitFor(organizationId),
                 "request_id", RequestIdFilter.current(request));
     }

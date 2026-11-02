@@ -147,7 +147,7 @@ public final class OrganizationService {
         if (!repository.touchActiveKey(key.id(), requiredScope)) {
             return Authentication.invalid();
         }
-        return Authentication.accepted(key.organizationId());
+        return Authentication.accepted(key.organizationId(), key.id());
     }
 
     public OrganizationRepository.OrganizationView organizationForOwner(UUID requestedId, UUID authenticatedId) {
@@ -230,17 +230,17 @@ public final class OrganizationService {
         }
     }
 
-    public record Authentication(HttpStatus status, UUID organizationId) {
-        static Authentication accepted(UUID organizationId) {
-            return new Authentication(HttpStatus.OK, organizationId);
+    public record Authentication(HttpStatus status, UUID organizationId, UUID keyId) {
+        static Authentication accepted(UUID organizationId, UUID keyId) {
+            return new Authentication(HttpStatus.OK, organizationId, keyId);
         }
 
         static Authentication invalid() {
-            return new Authentication(HttpStatus.UNAUTHORIZED, null);
+            return new Authentication(HttpStatus.UNAUTHORIZED, null, null);
         }
 
         static Authentication forbidden() {
-            return new Authentication(HttpStatus.FORBIDDEN, null);
+            return new Authentication(HttpStatus.FORBIDDEN, null, null);
         }
     }
 }

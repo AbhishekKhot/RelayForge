@@ -65,8 +65,8 @@ public final class DeliveryController {
             @RequestHeader(value = "Idempotency-Key", required = false) String key,
             @PathVariable UUID deliveryId, @RequestBody(required = false) ReplayRequest body,
             HttpServletRequest request) {
-        UUID organization = authenticator.authenticateReplay(authorization);
-        var result = replays.replay(organization, deliveryId, key,
+        var actor = authenticator.authenticateReplay(authorization);
+        var result = replays.replay(actor.organizationId(), actor.keyId(), deliveryId, key,
                 body == null ? null : body.reason(), RequestIdFilter.current(request));
         return ResponseEntity.accepted().body(Map.of("data", result,
                 "request_id", RequestIdFilter.current(request)));

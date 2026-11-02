@@ -29,6 +29,7 @@ class DeliveryReplayIT {
     private static JdbcTemplate jdbc;
     private static DeliveryReplayService service;
     private static final Instant NOW = Instant.now();
+    private static final UUID ACTOR = UUID.randomUUID();
 
     @BeforeAll
     static void startDatabase() {
@@ -47,8 +48,10 @@ class DeliveryReplayIT {
     @Test
     void createsOneAtomicReplayAndReturnsSameResultForSameKey() {
         Source source = source("DEAD_LETTERED", "ACTIVE", NOW.minusSeconds(60));
-        var first = service.replay(source.organization(), source.delivery(), "retry-key", "Outage resolved", "req-one");
-        var repeated = service.replay(source.organization(), source.delivery(), "retry-key", "Outage resolved", "req-two");
+        var first = service.replay(source.organization(), ACTOR, source.delivery(),
+                "retry-key", "Outage resolved", "req-one");
+        var repeated = service.replay(source.organization(), ACTOR, source.delivery(),
+                "retry-key", "Outage resolved", "req-two");
         assertThat(repeated).isEqualTo(first);
         assertThat(first.originalDeliveryId()).isEqualTo(source.delivery());
         assertThat(first.replayDeliveryId()).isNotEqualTo(source.delivery());
@@ -58,6 +61,10 @@ class DeliveryReplayIT {
         assertThat(count("delivery_work", "delivery_id", first.replayDeliveryId())).isEqualTo(1);
         assertThat(count("replay_requests", "replay_delivery_id", first.replayDeliveryId())).isEqualTo(1);
         assertThat(count("delivery_audit_records", "delivery_id", first.replayDeliveryId())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT actor_key_id FROM delivery_audit_records WHERE delivery_id = ?",
+                UUID.class, first.replayDeliveryId())).isEqualTo(ACTOR);
+        assertThat(jdbc.queryForObject("SELECT requested_by_key_id FROM replay_requests "
+                + "WHERE replay_delivery_id = ?", UUID.class, first.replayDeliveryId())).isEqualTo(ACTOR);
         assertThat(count("delivery_outbox", "delivery_id", first.replayDeliveryId())).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT status FROM deliveries WHERE id = ?", String.class,
                 source.delivery())).isEqualTo("DEAD_LETTERED");
@@ -69,10 +76,10 @@ class DeliveryReplayIT {
     @Test
     void rejectsChangedBodyAndOtherOrganization() {
         Source source = source("DEAD_LETTERED", "ACTIVE", NOW.minusSeconds(60));
-        service.replay(source.organization(), source.delivery(), "same-key", "one", "req");
-        assertStatus(HttpStatus.CONFLICT, () -> service.replay(source.organization(),
+        service.replay(source.organization(), ACTOR, source.delivery(), "same-key", "one", "req");
+        assertStatus(HttpStatus.CONFLICT, () -> service.replay(source.organization(), ACTOR,
                 source.delivery(), "same-key", "two", "req"));
-        assertStatus(HttpStatus.NOT_FOUND, () -> service.replay(UUID.randomUUID(),
+        assertStatus(HttpStatus.NOT_FOUND, () -> service.replay(UUID.randomUUID(), ACTOR,
                 source.delivery(), "same-key", "one", "req"));
     }
 
@@ -80,9 +87,9 @@ class DeliveryReplayIT {
     void concurrentSameKeyCreatesOneGeneration() throws Exception {
         Source source = source("DEAD_LETTERED", "ACTIVE", NOW.minusSeconds(60));
         try (var workers = Executors.newFixedThreadPool(2)) {
-            var first = workers.submit(() -> service.replay(source.organization(), source.delivery(),
+            var first = workers.submit(() -> service.replay(source.organization(), ACTOR, source.delivery(),
                     "parallel", "Recovered", "req-a"));
-            var second = workers.submit(() -> service.replay(source.organization(), source.delivery(),
+            var second = workers.submit(() -> service.replay(source.organization(), ACTOR, source.delivery(),
                     "parallel", "Recovered", "req-b"));
             assertThat(first.get()).isEqualTo(second.get());
         }
@@ -93,13 +100,13 @@ class DeliveryReplayIT {
     @Test
     void rejectsIneligibleExpiredAndInactiveEndpoint() {
         Source pending = source("PENDING", "ACTIVE", NOW.minusSeconds(60));
-        assertStatus(HttpStatus.CONFLICT, () -> service.replay(pending.organization(),
+        assertStatus(HttpStatus.CONFLICT, () -> service.replay(pending.organization(), ACTOR,
                 pending.delivery(), "pending", null, "req"));
         Source inactive = source("DEAD_LETTERED", "DISABLED", NOW.minusSeconds(60));
-        assertStatus(HttpStatus.CONFLICT, () -> service.replay(inactive.organization(),
+        assertStatus(HttpStatus.CONFLICT, () -> service.replay(inactive.organization(), ACTOR,
                 inactive.delivery(), "disabled", null, "req"));
         Source expired = source("DEAD_LETTERED", "ACTIVE", NOW.minusSeconds(2161 * 3600L));
-        assertStatus(HttpStatus.CONFLICT, () -> service.replay(expired.organization(),
+        assertStatus(HttpStatus.CONFLICT, () -> service.replay(expired.organization(), ACTOR,
                 expired.delivery(), "expired", null, "req"));
     }
 
@@ -113,7 +120,7 @@ class DeliveryReplayIT {
         jdbc.execute("CREATE TRIGGER reject_replay_outbox BEFORE INSERT ON delivery_outbox "
                 + "FOR EACH ROW EXECUTE FUNCTION reject_replay_outbox()");
         try {
-            assertStatus(HttpStatus.SERVICE_UNAVAILABLE, () -> service.replay(source.organization(),
+            assertStatus(HttpStatus.SERVICE_UNAVAILABLE, () -> service.replay(source.organization(), ACTOR,
                     source.delivery(), "rollback", null, "req"));
         } finally {
             jdbc.execute("DROP TRIGGER reject_replay_outbox ON delivery_outbox");
