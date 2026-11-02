@@ -25,11 +25,18 @@ public final class JdbcRoutingRepository implements RoutingRepository {
                 event.eventLocator(), Timestamp.from(event.acceptedAt()),
                 event.ingestionShardId(), event.deliveryShardId());
         Progress progress = lockProgress(event);
-        if (!Objects.equals(progress.eventLocator(), event.eventLocator())
-                || !progress.ingestionShardId().equals(event.ingestionShardId())
+        if (!progress.ingestionShardId().equals(event.ingestionShardId())
                 || !progress.deliveryShardId().equals(event.deliveryShardId())
-                || !progress.acceptedAt().equals(event.acceptedAt())) {
+                || !progress.acceptedAt().equals(event.acceptedAt())
+                || progress.eventLocator() != null
+                && !progress.eventLocator().equals(event.eventLocator())) {
             throw new IllegalStateException("Routing reference changed");
+        }
+        if (progress.eventLocator() == null) {
+            jdbc.update("""
+                    UPDATE routing_progress SET event_locator = ?, updated_at = clock_timestamp()
+                    WHERE accepted_day = ? AND event_id = ? AND organization_id = ?
+                    """, event.eventLocator(), event.acceptedDay(), event.eventId(), event.organizationId());
         }
         if (!"SELECTING".equals(progress.status())) {
             return;

@@ -55,7 +55,7 @@ class DeliveryProcessorTest {
                 UUID.randomUUID(), eventId, "evt_test", 2));
         when(references.endpoint(organizationId, endpointId)).thenReturn(json.readTree("""
                 {"organization_id":"%s","endpoint_id":"%s","base_url":"http://localhost:18080",
-                 "path":"/hook","query_params":{},"headers":{},"timeout_ms":1000,
+                 "path":"/hook","query_params":{},"headers":{},"version":1,"timeout_ms":1000,
                  "max_attempts":3,"max_concurrency":2,"authentication":{"type":"NONE"},
                  "signing_secret":"%s"}
                 """.formatted(organizationId, endpointId, secret)));

@@ -74,6 +74,11 @@ public final class DeliveryProcessor implements AutoCloseable {
             attempts.finishExhausted(deliveryId, maxAttempts);
             return;
         }
+        long configurationVersion = endpoint.path("version").asLong(-1);
+        if (configurationVersion < 1) {
+            attempts.deferUnclaimed(deliveryId, clock.instant().plusSeconds(30));
+            return;
+        }
         var claimed = claims.claim(deliveryId, workerId, concurrency, 200);
         if (claimed.isEmpty()) {
             return;
@@ -99,6 +104,10 @@ public final class DeliveryProcessor implements AutoCloseable {
         }, 20, 20, TimeUnit.SECONDS);
         try {
             String locator = attempts.eventLocator(lease);
+            endpoint = references.endpoint(lease.organizationId(), lease.endpointId());
+            if (endpoint.path("version").asLong(-1) != configurationVersion) {
+                return;
+            }
             JsonNode payload = references.payload(lease.organizationId(), locator);
             verify(endpoint, payload, lease, locator);
             ValidatedDestination destination = policy.validate(new Destination(
@@ -206,6 +215,10 @@ public final class DeliveryProcessor implements AutoCloseable {
         String authorization = request.headers().get("Authorization");
         if (authorization != null) {
             result = result.replace(authorization, "[REDACTED]");
+            int separator = authorization.indexOf(' ');
+            if (separator >= 0 && separator + 1 < authorization.length()) {
+                result = result.replace(authorization.substring(separator + 1), "[REDACTED]");
+            }
         }
         return result.length() > 1000 ? result.substring(0, 1000) : result;
     }

@@ -118,6 +118,25 @@ class RoutingServiceIT {
                 String.class, organization)).isEqualTo("NO_SUBSCRIBERS");
     }
 
+    @Test
+    void fillsLocatorForExistingVerifiedRoutingProgress() {
+        UUID organization = UUID.randomUUID();
+        VerifiedEvent accepted = accepted(organization, UUID.randomUUID(), "legacy.type");
+        jdbc.update("INSERT INTO projection_state (organization_id, source_revision, ready) "
+                + "VALUES (?, 0, true)", organization);
+        jdbc.update("""
+                INSERT INTO routing_progress (accepted_day, event_id, organization_id,
+                    event_accepted_at, ingestion_shard_id, delivery_shard_id, status)
+                VALUES (?, ?, ?, ?, ?, ?, 'SELECTING')
+                """, accepted.acceptedDay(), accepted.eventId(), organization,
+                java.sql.Timestamp.from(accepted.acceptedAt()), accepted.ingestionShardId(),
+                accepted.deliveryShardId());
+        routing.route(accepted);
+        assertThat(jdbc.queryForObject("SELECT event_locator FROM routing_progress "
+                + "WHERE organization_id = ?", String.class, organization))
+                .isEqualTo(accepted.eventLocator());
+    }
+
     private static UUID addSubscription(UUID organization, String eventType) {
         UUID endpoint = UUID.randomUUID();
         jdbc.update("""

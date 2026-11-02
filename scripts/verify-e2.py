@@ -89,7 +89,8 @@ def main():
     assert status == 200 and len(journal["requests"]) == 1
     received = journal["requests"][0]
     body = base64.b64decode(received["bodyAsBase64"])
-    headers = {name.lower(): value if isinstance(value, str) else value[0]
+    headers = {name.lower(): value if isinstance(value, str)
+               else value[0] if isinstance(value, list) else value["values"][0]
                for name, value in received["headers"].items()}
     timestamp = headers["x-relayforge-timestamp"]
     signing_key = base64.urlsafe_b64decode(secret + "=" * (-len(secret) % 4))

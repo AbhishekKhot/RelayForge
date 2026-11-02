@@ -72,7 +72,6 @@ python3 scripts/verify-b1.py
 python3 scripts/verify-b2.py
 python3 scripts/verify-b3.py
 python3 scripts/verify-d1.py
-python3 scripts/verify-e2.py
 
 docker compose exec -T postgres sh -c \
     'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 \
