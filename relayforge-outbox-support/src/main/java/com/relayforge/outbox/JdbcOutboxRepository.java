@@ -105,7 +105,7 @@ public final class JdbcOutboxRepository implements OutboxRepository {
 
     public enum Owner {
         CONTROL("control_outbox", "o.aggregate_id"),
-        INGESTION("ingestion_outbox", "o.partition_key"),
+        INGESTION("ingestion_outbox", "o.event_id::text"),
         DELIVERY("delivery_outbox", "COALESCE(o.delivery_id::text, o.event_id::text)");
 
         private final String tableName;

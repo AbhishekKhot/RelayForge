@@ -142,7 +142,8 @@ class JdbcOutboxRepositoryIT {
                 controlId);
         assertThat(control.claim("worker", 1, Duration.ofSeconds(30)).getFirst().publishAttempts()).isEqualTo(2);
         assertThat(repository(JdbcOutboxRepository.Owner.INGESTION)
-                .claim("worker", 1, Duration.ofSeconds(30)).getFirst().aggregateId()).isEqualTo(locator);
+                .claim("worker", 1, Duration.ofSeconds(30)).getFirst().aggregateId())
+                .isEqualTo(ingestionEvent.toString());
         assertThat(repository(JdbcOutboxRepository.Owner.DELIVERY)
                 .claim("worker", 1, Duration.ofSeconds(30)).getFirst().aggregateId())
                 .isEqualTo(deliveryId.toString());

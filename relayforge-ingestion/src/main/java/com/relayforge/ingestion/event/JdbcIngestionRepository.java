@@ -124,4 +124,18 @@ public final class JdbcIngestionRepository implements IngestionRepository {
                 row.getString(3), row.getTimestamp(4) == null ? null : row.getTimestamp(4).toInstant(),
                 row.getTimestamp(5).toInstant()), organizationId, day, eventId).stream().findFirst();
     }
+
+    @Override
+    public Optional<RoutingEvent> findRoutingEvent(UUID organizationId, LocalDate day, UUID eventId,
+            String locator) {
+        return jdbc.query("""
+                SELECT event.event_type, event.accepted_at, event.payload_hash FROM events event
+                JOIN idempotency_registry registry ON registry.organization_id = event.organization_id
+                    AND registry.idempotency_key = event.idempotency_key
+                    AND registry.event_id = event.id AND registry.event_locator = ?
+                WHERE event.organization_id = ? AND event.accepted_day = ? AND event.id = ?
+                """, (row, index) -> new RoutingEvent(row.getString(1),
+                row.getTimestamp(2).toInstant(), row.getBytes(3)), locator, organizationId, day, eventId)
+                .stream().findFirst();
+    }
 }

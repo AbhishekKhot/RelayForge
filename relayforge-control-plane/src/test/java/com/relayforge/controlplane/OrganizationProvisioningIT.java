@@ -43,6 +43,7 @@ class OrganizationProvisioningIT {
         registry.add("relayforge.database.username", DATABASE::getUsername);
         registry.add("relayforge.database.password", DATABASE::getPassword);
         registry.add("relayforge.provisioning.credential", () -> PROVISIONING_CREDENTIAL);
+        registry.add("relayforge.router.config-credential", () -> "test-config-credential-01234567890123456789");
         registry.add("relayforge.security.api-key-hmac-key", () -> "0123456789abcdef".repeat(4));
         registry.add("relayforge.encryption.local-keys", () -> "local-v1:" + "fedcba9876543210".repeat(4));
         registry.add("relayforge.encryption.active-version", () -> "local-v1");

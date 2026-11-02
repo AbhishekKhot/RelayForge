@@ -30,8 +30,22 @@ public interface IngestionRepository {
 
     Optional<StoredEvent> findEvent(UUID organizationId, LocalDate day, UUID eventId);
 
+    Optional<RoutingEvent> findRoutingEvent(UUID organizationId, LocalDate day, UUID eventId,
+            String locator);
+
     record StoredEvent(String eventType, int schemaVersion, String payloadJson,
             Instant occurredAt, Instant acceptedAt) {
+    }
+
+    record RoutingEvent(String eventType, Instant acceptedAt, byte[] payloadHash) {
+        public RoutingEvent {
+            payloadHash = payloadHash.clone();
+        }
+
+        @Override
+        public byte[] payloadHash() {
+            return payloadHash.clone();
+        }
     }
 
     record RegistryEntry(byte[] requestHash, String locator, UUID eventId, Instant acceptedAt,

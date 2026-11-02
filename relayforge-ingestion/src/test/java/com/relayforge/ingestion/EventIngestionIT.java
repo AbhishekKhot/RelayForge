@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.sun.net.httpserver.HttpServer;
 import com.relayforge.ingestion.event.DurabilityGate;
 import com.relayforge.ingestion.event.IngestionRepository;
+import com.relayforge.ingestion.event.EventLocator;
 import java.net.InetSocketAddress;
 import java.sql.DriverManager;
 import java.util.Map;
@@ -85,6 +86,7 @@ class EventIngestionIT {
         registry.add("relayforge.control.internal-url", () -> "http://127.0.0.1:" + AUTH.getAddress().getPort());
         registry.add("relayforge.delivery.internal-url", () -> "http://127.0.0.1:" + DELIVERY.getAddress().getPort());
         registry.add("relayforge.event-summary.credential", () -> "test-summary-credential-01234567890123456789");
+        registry.add("relayforge.router.event-credential", () -> "test-router-credential-01234567890123456789");
         registry.add("relayforge.ingestion.acceptance-enabled", () -> "true");
     }
 
@@ -102,6 +104,32 @@ class EventIngestionIT {
 
     @Autowired
     private IngestionRepository repository;
+
+    @Test
+    void internalRoutingLookupRequiresCredentialAndTenant() {
+        ResponseEntity<JsonNode> created = publish("good-key", "routing-" + UUID.randomUUID(),
+                "payment.completed", Map.of("amount", 1500));
+        String locator = created.getBody().path("data").path("event_id").asText();
+        String path = "/internal/v1/events/" + locator + "/routing?organization_id=" + ORGANIZATION;
+        assertThat(client.getForEntity(path, JsonNode.class).getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-RelayForge-Router-Event-Credential", "test-router-credential-01234567890123456789");
+        ResponseEntity<JsonNode> found = client.exchange(path, HttpMethod.GET,
+                new HttpEntity<>(headers), JsonNode.class);
+        assertThat(found.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(found.getBody().path("organization_id").asText()).isEqualTo(ORGANIZATION.toString());
+        assertThat(found.getBody().path("event_type").asText()).isEqualTo("payment.completed");
+        assertThat(found.getBody().path("payload_hash").asText()).hasSize(64);
+        String crossTenant = path.replace(ORGANIZATION.toString(), EXPIRY_ORGANIZATION.toString());
+        assertThat(client.exchange(crossTenant, HttpMethod.GET, new HttpEntity<>(headers), JsonNode.class)
+                .getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        EventLocator.Decoded decoded = EventLocator.decode(locator);
+        String forged = EventLocator.encode(decoded.eventId(), decoded.acceptedDay(), decoded.bucketId(),
+                decoded.mapEpoch() + 1, decoded.ingestionShardId(), decoded.deliveryShardId());
+        String forgedPath = path.replace(locator, forged);
+        assertThat(client.exchange(forgedPath, HttpMethod.GET, new HttpEntity<>(headers), JsonNode.class)
+                .getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
 
     @Test
     void ownerReadsAcceptanceButOtherTenantAndInvalidLocatorCannotRead() {
