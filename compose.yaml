@@ -295,6 +295,7 @@ services:
       postgres: { condition: service_healthy }
       kafka-init: { condition: service_completed_successfully }
       webhook-simulator: { condition: service_healthy }
+      delivery-api: { condition: service_healthy }
 
   delivery-publisher:
     <<: *app
