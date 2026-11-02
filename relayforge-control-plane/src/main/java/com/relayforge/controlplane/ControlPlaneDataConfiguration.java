@@ -8,6 +8,9 @@ import com.relayforge.controlplane.endpoint.EndpointChangeRecorder;
 import com.relayforge.controlplane.endpoint.EndpointManagementService;
 import com.relayforge.controlplane.endpoint.EndpointRepository;
 import com.relayforge.controlplane.endpoint.JdbcEndpointRepository;
+import com.relayforge.controlplane.endpoint.ConfigurationSnapshotRepository;
+import com.relayforge.controlplane.endpoint.JdbcConfigurationSnapshotRepository;
+import com.relayforge.controlplane.endpoint.ConfigurationSnapshotService;
 import com.relayforge.controlplane.endpoint.auth.EndpointAuthValidator;
 import com.relayforge.controlplane.endpoint.auth.EndpointSecretCipher;
 import com.relayforge.controlplane.endpoint.auth.EndpointKeyCheckService;
@@ -96,6 +99,16 @@ public class ControlPlaneDataConfiguration {
     @Bean
     EndpointRepository endpointRepository(JdbcTemplate controlJdbcTemplate) {
         return new JdbcEndpointRepository(controlJdbcTemplate);
+    }
+
+    @Bean
+    ConfigurationSnapshotRepository configurationSnapshotRepository(JdbcTemplate controlJdbcTemplate) {
+        return new JdbcConfigurationSnapshotRepository(controlJdbcTemplate);
+    }
+
+    @Bean
+    ConfigurationSnapshotService configurationSnapshotService(ConfigurationSnapshotRepository repository) {
+        return new ConfigurationSnapshotService(repository);
     }
 
     @Bean

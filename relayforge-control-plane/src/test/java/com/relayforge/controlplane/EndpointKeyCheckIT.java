@@ -48,6 +48,7 @@ class EndpointKeyCheckIT {
                         Map.entry("relayforge.database.username", DATABASE.getUsername()),
                         Map.entry("relayforge.database.password", DATABASE.getPassword()),
                         Map.entry("relayforge.provisioning.credential", "trusted-provisioning-credential-for-tests-12345"),
+                        Map.entry("relayforge.router.config-credential", "test-config-credential-01234567890123456789"),
                         Map.entry("relayforge.security.api-key-hmac-key", FIRST),
                         Map.entry("relayforge.encryption.local-keys", "local-v1:" + key),
                         Map.entry("relayforge.encryption.active-version", "local-v1")))

@@ -68,6 +68,7 @@ class EndpointRegistrationIT {
         registry.add("relayforge.database.username", DATABASE::getUsername);
         registry.add("relayforge.database.password", DATABASE::getPassword);
         registry.add("relayforge.provisioning.credential", () -> PROVISIONING_CREDENTIAL);
+        registry.add("relayforge.router.config-credential", () -> "test-config-credential-01234567890123456789");
         registry.add("relayforge.security.api-key-hmac-key", () -> "0123456789abcdef".repeat(4));
         registry.add("relayforge.encryption.local-keys", () -> "local-v1:" + "fedcba9876543210".repeat(4));
         registry.add("relayforge.encryption.active-version", () -> "local-v1");
@@ -80,6 +81,35 @@ class EndpointRegistrationIT {
 
     @Autowired
     private EndpointSecretCipher secretCipher;
+
+    @Test
+    void internalConfigurationSnapshotIsPagedTenantScopedAndSecretFree() throws Exception {
+        Credentials owner = credentials();
+        Credentials other = credentials();
+        Map<String, Object> body = new HashMap<>(request(simulatorUrl()));
+        body.put("authentication", Map.of("type", "BEARER", "token", "snapshot-private-token"));
+        register(owner.key(), body);
+        register(owner.key(), request(simulatorUrl()));
+        register(other.key(), request(simulatorUrl()));
+        String path = "/internal/v1/organizations/" + owner.organizationId() + "/configuration";
+        assertThat(client.getForEntity(path + "/endpoints", JsonNode.class).getStatusCode())
+                .isEqualTo(HttpStatus.UNAUTHORIZED);
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-RelayForge-Router-Config-Credential", "test-config-credential-01234567890123456789");
+        ResponseEntity<JsonNode> endpoints = client.exchange(path + "/endpoints?limit=1",
+                HttpMethod.GET, new HttpEntity<>(headers), JsonNode.class);
+        assertThat(endpoints.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(endpoints.getBody().path("source_revision").asLong()).isEqualTo(2);
+        assertThat(endpoints.getBody().path("data").size()).isEqualTo(1);
+        assertThat(endpoints.getBody().path("next_cursor").asText()).isNotBlank();
+        assertThat(endpoints.getBody().toString()).doesNotContain("snapshot-private-token", simulatorUrl(),
+                other.organizationId().toString(), "ciphertext");
+        ResponseEntity<JsonNode> subscriptions = client.exchange(path + "/subscriptions?limit=100",
+                HttpMethod.GET, new HttpEntity<>(headers), JsonNode.class);
+        assertThat(subscriptions.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(subscriptions.getBody().path("data").size()).isEqualTo(4);
+        assertThat(subscriptions.getBody().toString()).doesNotContain(other.organizationId().toString());
+    }
 
     @Test
     void registersValidatedSimulatorEndpointAndSubscriptionsAtomically() throws Exception {

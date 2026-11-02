@@ -5,6 +5,7 @@ import com.relayforge.ingestion.event.ControlPlaneAuthenticator;
 import com.relayforge.ingestion.event.DurabilityGate;
 import com.relayforge.ingestion.event.DeliverySummaryClient;
 import com.relayforge.ingestion.event.EventQueryService;
+import com.relayforge.ingestion.event.RoutingEventLookupService;
 import com.relayforge.ingestion.event.EventIngestionService;
 import com.relayforge.ingestion.event.EventRequestParser;
 import com.relayforge.ingestion.event.IngestionRepository;
@@ -101,6 +102,14 @@ public class IngestionDataConfiguration {
     EventQueryService eventQueryService(IngestionRepository repository, DeliverySummaryClient summaries,
             ObjectMapper json, Environment environment) {
         return new EventQueryService(repository, summaries, json,
+                environment.getProperty("relayforge.ingestion.shard-id", "ing-a"),
+                environment.getProperty("relayforge.ingestion.delivery-shard-id", "dlv-a"));
+    }
+
+    @Bean
+    RoutingEventLookupService routingEventLookupService(IngestionRepository repository,
+            Environment environment) {
+        return new RoutingEventLookupService(repository,
                 environment.getProperty("relayforge.ingestion.shard-id", "ing-a"),
                 environment.getProperty("relayforge.ingestion.delivery-shard-id", "dlv-a"));
     }

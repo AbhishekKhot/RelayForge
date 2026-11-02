@@ -89,7 +89,7 @@ def verify():
     status, owned = get(ingestion, f"/v1/events/{event_id}", bearer)
     assert status == 200 and owned["data"]["event_id"] == event_id, (status, owned)
     assert owned["data"]["payload"] == body["data"]
-    assert owned["data"]["delivery_summary"]["status"] == "PENDING"
+    assert owned["data"]["delivery_summary"]["status"] in {"PENDING", "NO_SUBSCRIBERS"}
     other_admin = {**admin, "Idempotency-Key": str(uuid4())}
     status, other = post(control, "/v1/organizations", {"name": "C2 other"}, other_admin)
     assert status == 201, status
@@ -141,7 +141,105 @@ def verify():
     assert status == 202, (status, recovered)
     assert count("events", organization_id) == 2
     assert count("ingestion_outbox", organization_id) == 2
+    verify_routing(env, control, ingestion)
     print("C1 HA event acceptance, idempotency, and standby-loss checks passed")
+
+
+def delivery_count(table, organization_id):
+    assert table in {"routing_targets", "deliveries", "delivery_work", "delivery_outbox"}
+    result = run(HA + ["exec", "-T", "postgres", "sh", "-c",
+                       'psql -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d relayforge_delivery'],
+                 input=f"SELECT count(*) FROM {table} WHERE organization_id = '{organization_id}';\n",
+                 capture_output=True)
+    return int(result.stdout.strip())
+
+
+def wait_routing(ingestion, locator, bearer, expected_status, expected_count):
+    for _ in range(60):
+        status, event = get(ingestion, f"/v1/events/{locator}", bearer)
+        if status == 200:
+            summary = event["data"]["delivery_summary"]
+            if summary["status"] == expected_status and summary["delivery_count"] == expected_count:
+                return
+        time.sleep(2)
+    raise AssertionError("Event routing did not reach the expected outcome")
+
+
+def wait_router_caught_up(shard):
+    for _ in range(45):
+        result = run(HA + ["exec", "-T", "kafka",
+                           "/opt/kafka/bin/kafka-consumer-groups.sh", "--bootstrap-server", "kafka:9092",
+                           "--describe", "--group", f"relayforge-router-events-{shard}"],
+                     capture_output=True)
+        lines = [parts for parts in (line.split() for line in result.stdout.splitlines())
+                 if len(parts) >= 6 and parts[1] == "relayforge.event.accepted.v1"]
+        if lines and all(len(parts) >= 6 and parts[5] == "0" for parts in lines):
+            return
+        time.sleep(2)
+    raise AssertionError("Router consumer did not catch up")
+
+
+def verify_routing(env, control, ingestion):
+    admin = {"X-Provisioning-Credential": env["TRUSTED_PROVISIONING_CREDENTIAL"],
+             "Idempotency-Key": str(uuid4())}
+    status, organization = post(control, "/v1/organizations", {"name": "D3 routing acceptance"}, admin)
+    assert status == 201
+    organization_id = organization["data"]["organization_id"]
+    key_id = organization["data"]["api_key"].split("_")[2]
+    status, rotated = post(control, f"/v1/api-keys/{key_id}/rotate",
+                           {"scopes": ["events:write", "events:read", "endpoints:write"]}, admin)
+    assert status == 201
+    bearer = {"Authorization": "Bearer " + rotated["data"]["api_key"]}
+    endpoint = {"name": "D3 target", "destination": {
+        "base_url": env["WEBHOOK_SIMULATOR_URL"], "path": "/hook", "query_params": {},
+        "headers": {}, "metadata": {}}, "authentication": {"type": "NONE"},
+        "event_types": ["acceptance.d3"], "delivery_policy": {
+            "timeout_ms": 10000, "max_attempts": 3, "max_concurrency": 2}}
+    for index in range(2):
+        status, _ = post(control, "/v1/endpoints", {**endpoint, "name": f"D3 target {index}"}, bearer)
+        assert status == 201
+    status, snapshot = get(control, f"/internal/v1/organizations/{organization_id}"
+                           "/configuration/endpoints?limit=100",
+                           {"X-RelayForge-Router-Config-Credential": env["ROUTER_CONFIG_CREDENTIAL"]})
+    assert status == 200 and len(snapshot["data"]) == 2
+    assert "base_url" not in json.dumps(snapshot) and "auth_config" not in json.dumps(snapshot)
+
+    body = {"event_type": "acceptance.d3", "schema_version": 1, "data": {"routing": "two"}}
+    status, accepted = post(ingestion, "/v1/events", body,
+                            {**bearer, "Idempotency-Key": "d3-" + uuid4().hex})
+    assert status == 202
+    locator = accepted["data"]["event_id"]
+    wait_routing(ingestion, locator, bearer, "ROUTED", 2)
+    assert delivery_count("routing_targets", organization_id) == 2
+    assert delivery_count("deliveries", organization_id) == 2
+    assert delivery_count("delivery_work", organization_id) == 2
+    assert delivery_count("delivery_outbox", organization_id) == 2
+
+    result = run(HA + ["exec", "-T", "ingestion-primary", "sh", "-c",
+                       'psql -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d relayforge_ingestion'],
+                 input="""SELECT jsonb_build_object('message_id', 'msg_' || id::text,
+                    'message_type', message_type, 'schema_version', 1, 'occurred_at', created_at,
+                    'organization_id', organization_id, 'aggregate_id', event_id::text,
+                    'correlation_id', 'msg_' || id::text, 'payload', payload)::text
+                    FROM ingestion_outbox WHERE organization_id = '%s' AND partition_key = '%s';
+                    """ % (organization_id, locator), capture_output=True)
+    duplicate = result.stdout.strip()
+    assert duplicate
+    run(HA + ["exec", "-T", "kafka", "/opt/kafka/bin/kafka-console-producer.sh",
+              "--bootstrap-server", "kafka:9092", "--topic", "relayforge.event.accepted.v1",
+              "--property", "parse.key=true", "--property", "key.separator=|"],
+        input=locator + "|" + duplicate + "\n", capture_output=True)
+    wait_router_caught_up(env["DELIVERY_SHARD_ID"])
+    assert delivery_count("deliveries", organization_id) == 2
+    assert delivery_count("delivery_outbox", organization_id) == 2
+
+    status, zero = post(ingestion, "/v1/events",
+                        {"event_type": "acceptance.d3.none", "schema_version": 1, "data": {}},
+                        {**bearer, "Idempotency-Key": "d3-" + uuid4().hex})
+    assert status == 202
+    wait_routing(ingestion, zero["data"]["event_id"], bearer, "NO_SUBSCRIBERS", 0)
+    assert delivery_count("deliveries", organization_id) == 2
+    print("D3 HA routing, zero-match, duplicate Kafka, and projection checks passed")
 
 
 def restore_base():
