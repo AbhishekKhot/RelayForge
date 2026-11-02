@@ -36,8 +36,11 @@ public final class RetryPolicy {
                 : failure == Failure.TLS ? "TLS_REJECTED"
                 : failure == Failure.NETWORK ? "NETWORK_ERROR"
                 : retryable ? "HTTP_RETRYABLE" : "HTTP_TERMINAL";
-        if (!retryable || attemptNumber >= maxAttempts) {
+        if (!retryable) {
             return new Decision(Outcome.DEAD_LETTERED, null, errorCode);
+        }
+        if (attemptNumber >= maxAttempts) {
+            return new Decision(Outcome.DEAD_LETTERED, null, "MAX_ATTEMPTS");
         }
         Instant now = clock.instant();
         Instant horizon = createdAt.plus(settings.maxDeliveryAge());
@@ -62,7 +65,7 @@ public final class RetryPolicy {
         }
         Instant next = now.plus(delay);
         return !next.isBefore(horizon)
-                ? new Decision(Outcome.DEAD_LETTERED, null, errorCode)
+                ? new Decision(Outcome.DEAD_LETTERED, null, "RETRY_HORIZON")
                 : new Decision(Outcome.RETRY_SCHEDULED, next, errorCode);
     }
 

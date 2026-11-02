@@ -141,6 +141,7 @@ def main():
     assert status == 404
     print("E3 Compose delivery list, attempt detail, and tenant isolation checks passed")
 
+    throttled_delivery = None
     for path, response_status, response_headers in (
             ("/f1-throttled", 429, {"Retry-After": "120"}),
             ("/f1-terminal", 400, {})):
@@ -199,17 +200,18 @@ def main():
         outcome, count, http_status, work_count = row.split("|")
         assert count == "1" and http_status == str(response_status), row
         assert work_count == ("1" if response_status == 429 else "0"), row
-        status, detail = get(delivery_api, "/v1/deliveries/" +
-                             query("""
+        retry_delivery_id = query("""
                                  SELECT delivery.id FROM deliveries delivery
                                  JOIN routing_progress progress
                                    ON progress.accepted_day = delivery.accepted_day
                                   AND progress.event_id = delivery.event_id
                                   AND progress.organization_id = delivery.organization_id
                                  WHERE progress.event_locator = '%s';
-                             """ % locator), bearer)
+                             """ % locator)
+        status, detail = get(delivery_api, "/v1/deliveries/" + retry_delivery_id, bearer)
         assert status == 200 and detail["data"]["attempts"][0]["http_status"] == response_status
         if response_status == 429:
+            throttled_delivery = retry_delivery_id
             remaining = query("""
                 SELECT EXTRACT(EPOCH FROM (work.next_attempt_at - clock_timestamp()))::int
                 FROM delivery_work work JOIN routing_progress progress
@@ -222,6 +224,102 @@ def main():
             """ % locator)
             assert int(remaining) >= 60, remaining
     print("F1 Compose bounded Retry-After and terminal response checks passed")
+
+    assert throttled_delivery
+    subprocess.run(["docker", "compose", "stop", "delivery-worker", "retry-scheduler"],
+                   check=True, timeout=30)
+    query("""
+        BEGIN;
+        UPDATE delivery_work SET next_attempt_at = clock_timestamp() - interval '1 second'
+        WHERE delivery_id = '%s';
+        UPDATE deliveries SET next_attempt_at = clock_timestamp() - interval '1 second'
+        WHERE id = '%s';
+        COMMIT;
+    """ % (throttled_delivery, throttled_delivery))
+    status, _ = post(simulator, "/__admin/mappings", {
+        "priority": 1,
+        "request": {"method": "POST", "urlPath": "/f1-throttled"},
+        "response": {"status": 204},
+    }, {})
+    assert status == 201
+    subprocess.run(["docker", "compose", "start", "retry-scheduler", "delivery-worker"],
+                   check=True, timeout=30)
+    for _ in range(90):
+        resumed = query("""
+            SELECT status || '|' || attempt_count || '|'
+                || COALESCE(last_http_status::text, '')
+            FROM deliveries WHERE id = '%s';
+        """ % throttled_delivery)
+        if resumed == "SUCCEEDED|2|204":
+            break
+        time.sleep(1)
+    else:
+        raise AssertionError(f"F2 retry did not resume: {resumed}")
+    status, journal = post(simulator, "/__admin/requests/find", {
+        "method": "POST", "url": "/f1-throttled",
+        "bodyPatterns": [{"contains": throttled_delivery}],
+    }, {})
+    assert status == 200 and len(journal["requests"]) == 2
+    attempts_seen = sorted(json.loads(base64.b64decode(item["bodyAsBase64"]))["attempt_number"]
+                           for item in journal["requests"])
+    assert attempts_seen == [1, 2], attempts_seen
+    print("F2 Compose due retry survives worker and scheduler restart with stable delivery ID")
+
+    crashed_delivery = str(uuid4())
+    crashed_token = str(uuid4())
+    first_body = json.dumps({"delivery_id": crashed_delivery, "attempt_number": 1}).encode()
+    with urlopen(Request(simulator + "/status/204", first_body,
+                         {"Content-Type": "application/json"}, method="POST"), timeout=10) as response:
+        assert response.status == 204
+    query("""
+        BEGIN;
+        INSERT INTO deliveries (accepted_day, id, organization_id, event_id, endpoint_id,
+            generation, status, attempt_count, claim_count, lease_owner, lease_token,
+            lease_expires_at, processing_deadline_at)
+        SELECT accepted_day, '%s', organization_id, event_id, endpoint_id,
+            2, 'IN_PROGRESS', 1, 1, 'crashed-worker', '%s',
+            clock_timestamp() - interval '1 second', clock_timestamp() + interval '3 minutes'
+        FROM deliveries WHERE id = '%s';
+        INSERT INTO delivery_work (delivery_id, accepted_day, organization_id, endpoint_id,
+            status, event_expires_at, next_attempt_at, lease_owner, lease_token,
+            lease_expires_at, processing_deadline_at, claim_count)
+        SELECT id, accepted_day, organization_id, endpoint_id,
+            'IN_PROGRESS', clock_timestamp() + interval '1 day', clock_timestamp(),
+            'crashed-worker', '%s', clock_timestamp() - interval '1 second',
+            clock_timestamp() + interval '3 minutes', 1
+        FROM deliveries WHERE id = '%s';
+        INSERT INTO delivery_attempts (accepted_day, id, organization_id, delivery_id,
+            attempt_number, started_at, outcome)
+        SELECT accepted_day, '%s', organization_id, id, 1,
+            clock_timestamp() - interval '1 minute', 'IN_PROGRESS'
+        FROM deliveries WHERE id = '%s';
+        COMMIT;
+    """ % (crashed_delivery, crashed_token, delivery_id,
+           crashed_token, crashed_delivery, uuid4(), crashed_delivery))
+    for _ in range(90):
+        recovered = query("""
+            SELECT status || '|' || attempt_count || '|'
+                || COALESCE(last_http_status::text, '')
+            FROM deliveries WHERE id = '%s';
+        """ % crashed_delivery)
+        if recovered == "SUCCEEDED|2|204":
+            break
+        time.sleep(1)
+    else:
+        raise AssertionError(f"F2 uncertain receiver outcome did not recover: {recovered}")
+    outcomes = query("""
+        SELECT string_agg(attempt_number || ':' || outcome, ',' ORDER BY attempt_number)
+        FROM delivery_attempts WHERE delivery_id = '%s';
+    """ % crashed_delivery)
+    assert outcomes == "1:UNKNOWN,2:SUCCEEDED", outcomes
+    status, journal = post(simulator, "/__admin/requests/find", {
+        "method": "POST", "url": "/status/204",
+        "bodyPatterns": [{"contains": crashed_delivery}],
+    }, {})
+    assert status == 200 and len(journal["requests"]) == 2
+    assert sorted(json.loads(base64.b64decode(item["bodyAsBase64"]))["attempt_number"]
+                  for item in journal["requests"]) == [1, 2]
+    print("F2 Compose uncertain receiver success retries the same delivery ID")
 
 
 if __name__ == "__main__":

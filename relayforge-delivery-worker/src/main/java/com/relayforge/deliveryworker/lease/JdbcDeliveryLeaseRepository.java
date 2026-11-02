@@ -151,16 +151,35 @@ public final class JdbcDeliveryLeaseRepository implements DeliveryLeaseRepositor
     public int recoverExpired(int limit) {
         Instant now = databaseTime();
         List<Recovery> expired = jdbc.query("""
-                SELECT delivery_id, accepted_day, organization_id, lease_token
+                SELECT delivery_id, accepted_day, organization_id, lease_token, event_expires_at
                 FROM delivery_work WHERE status = 'IN_PROGRESS' AND lease_expires_at <= ?
                 ORDER BY lease_expires_at, delivery_id LIMIT ? FOR UPDATE SKIP LOCKED
                 """, (row, index) -> new Recovery(row.getObject(1, UUID.class),
                 row.getObject(2, LocalDate.class), row.getObject(3, UUID.class),
-                row.getObject(4, UUID.class)), Timestamp.from(now), limit);
+                row.getObject(4, UUID.class), row.getTimestamp(5).toInstant()),
+                Timestamp.from(now), limit);
         for (Recovery work : expired) {
             Delivery delivery = lockDelivery(work.day(), work.deliveryId());
             if (!"IN_PROGRESS".equals(delivery.status()) || !work.token().equals(delivery.token())) {
                 throw new IllegalStateException("Delivery and work lease disagree");
+            }
+            if (!work.eventExpiresAt().isAfter(now)) {
+                int changedDelivery = jdbc.update("""
+                        UPDATE deliveries SET status = 'DEAD_LETTERED',
+                            last_error_code = 'EVENT_EXPIRED', completed_at = clock_timestamp(),
+                            lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
+                            processing_deadline_at = NULL, updated_at = clock_timestamp(),
+                            version = version + 1
+                        WHERE accepted_day = ? AND id = ? AND organization_id = ?
+                            AND lease_token = ? AND status = 'IN_PROGRESS'
+                        """, work.day(), work.deliveryId(), work.organizationId(), work.token());
+                int changedWork = jdbc.update("""
+                        DELETE FROM delivery_work WHERE delivery_id = ? AND lease_token = ?
+                            AND status = 'IN_PROGRESS'
+                        """, work.deliveryId(), work.token());
+                requirePair(changedWork, changedDelivery);
+                markAttemptUnknown(work);
+                continue;
             }
             String next = delivery.attemptCount() == 0 ? "PENDING" : "RETRY_SCHEDULED";
             int changedWork = jdbc.update("""
@@ -178,21 +197,27 @@ public final class JdbcDeliveryLeaseRepository implements DeliveryLeaseRepositor
                     """, next, Timestamp.from(now), work.day(), work.deliveryId(),
                     work.organizationId(), work.token());
             requirePair(changedWork, changedDelivery);
-            jdbc.update("""
-                    UPDATE delivery_attempts SET outcome = 'UNKNOWN', finished_at = clock_timestamp(),
-                        error_code = 'LEASE_EXPIRED'
-                    WHERE accepted_day = ? AND delivery_id = ? AND organization_id = ?
-                        AND outcome = 'IN_PROGRESS'
-                    """, work.day(), work.deliveryId(), work.organizationId());
-            jdbc.update("""
-                    INSERT INTO delivery_outbox (organization_id, accepted_day, event_id,
-                        delivery_id, message_type, topic, partition_key, payload)
-                    VALUES (?, ?, ?, ?, 'delivery.ready.v1', 'relayforge.delivery.ready.v1', ?,
-                        jsonb_build_object('delivery_id', ?::text))
-                    """, work.organizationId(), work.day(), delivery.eventId(), work.deliveryId(),
-                    work.deliveryId().toString(), work.deliveryId().toString());
+            markAttemptUnknown(work);
+            if (delivery.attemptCount() == 0) {
+                jdbc.update("""
+                        INSERT INTO delivery_outbox (organization_id, accepted_day, event_id,
+                            delivery_id, message_type, topic, partition_key, payload)
+                        VALUES (?, ?, ?, ?, 'delivery.ready.v1', 'relayforge.delivery.ready.v1', ?,
+                            jsonb_build_object('delivery_id', ?::text))
+                        """, work.organizationId(), work.day(), delivery.eventId(),
+                        work.deliveryId(), work.deliveryId().toString(), work.deliveryId().toString());
+            }
         }
         return expired.size();
+    }
+
+    private void markAttemptUnknown(Recovery work) {
+        jdbc.update("""
+                UPDATE delivery_attempts SET outcome = 'UNKNOWN', finished_at = clock_timestamp(),
+                    error_code = 'LEASE_EXPIRED'
+                WHERE accepted_day = ? AND delivery_id = ? AND organization_id = ?
+                    AND outcome = 'IN_PROGRESS'
+                """, work.day(), work.deliveryId(), work.organizationId());
     }
 
     private int activeCount(UUID endpointId, Instant now) {
@@ -229,6 +254,7 @@ public final class JdbcDeliveryLeaseRepository implements DeliveryLeaseRepositor
     private record Delivery(String status, long version, UUID token, int attemptCount, UUID eventId) {
     }
 
-    private record Recovery(UUID deliveryId, LocalDate day, UUID organizationId, UUID token) {
+    private record Recovery(UUID deliveryId, LocalDate day, UUID organizationId, UUID token,
+            Instant eventExpiresAt) {
     }
 }

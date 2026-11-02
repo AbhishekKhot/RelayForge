@@ -285,14 +285,6 @@ public final class DeliveryAttemptService {
                             next_attempt_at = ?, updated_at = clock_timestamp()
                         WHERE delivery_id = ? AND lease_token = ?
                         """, Timestamp.from(nextAttemptAt), lease.deliveryId(), lease.token());
-                jdbc.update("""
-                        INSERT INTO delivery_outbox (organization_id, accepted_day, event_id,
-                            delivery_id, message_type, topic, partition_key, payload, available_at)
-                        VALUES (?, ?, ?, ?, 'delivery.ready.v1', 'relayforge.delivery.ready.v1', ?,
-                            jsonb_build_object('delivery_id', ?::text), ?)
-                        """, lease.organizationId(), lease.acceptedDay(), attempt.eventId(),
-                        lease.deliveryId(), lease.deliveryId().toString(),
-                        lease.deliveryId().toString(), Timestamp.from(nextAttemptAt));
             } else {
                 jdbc.update("DELETE FROM delivery_work WHERE delivery_id = ? AND lease_token = ?",
                         lease.deliveryId(), lease.token());

@@ -331,6 +331,7 @@ services:
       args: { MODULE: relayforge-retry-scheduler }
     environment:
       <<: *delivery-db-env
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,metrics
     depends_on:
       postgres: { condition: service_healthy }
 
