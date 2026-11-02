@@ -2,6 +2,7 @@ package com.relayforge.deliveryworker.lease;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -119,7 +120,8 @@ class DeliveryClaimServiceIT {
                 INSERT INTO routing_progress (accepted_day, event_id, organization_id,
                     event_accepted_at, ingestion_shard_id, delivery_shard_id, status)
                 VALUES (?, ?, ?, ?, 'ing-a', 'dlv-a', 'ROUTED')
-                """, day, event, organization, day.atStartOfDay().toInstant(ZoneOffset.UTC));
+                """, day, event, organization,
+                Timestamp.from(day.atStartOfDay().toInstant(ZoneOffset.UTC)));
         jdbc.update("""
                 INSERT INTO deliveries (accepted_day, id, organization_id, event_id, endpoint_id, status)
                 VALUES (?, ?, ?, ?, ?, 'PENDING')
