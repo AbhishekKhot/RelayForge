@@ -154,10 +154,20 @@ class DeliveryClaimServiceIT {
         UUID delivery = due(UUID.randomUUID());
         DeliveryClaimService.Lease lease = claims.claim(delivery, "worker-retry", 2, 20).orElseThrow();
         DeliveryAttemptService.Attempt attempt = attempts.reserve(lease, 5);
+        Instant retryAt = Instant.now().plusSeconds(120)
+                .truncatedTo(java.time.temporal.ChronoUnit.MICROS);
         assertThat(attempts.finish(lease, attempt, 503, "HTTP_RETRYABLE", null,
-                Instant.now().plusSeconds(30))).isTrue();
+                retryAt)).isTrue();
         assertThat(jdbc.queryForObject("SELECT status FROM deliveries WHERE id = ?",
                 String.class, delivery)).isEqualTo("RETRY_SCHEDULED");
+        assertThat(jdbc.queryForObject("SELECT status FROM delivery_work WHERE delivery_id = ?",
+                String.class, delivery)).isEqualTo("RETRY_SCHEDULED");
+        assertThat(jdbc.queryForObject("SELECT next_attempt_at FROM deliveries WHERE id = ?",
+                Timestamp.class, delivery).toInstant()).isEqualTo(retryAt);
+        assertThat(jdbc.queryForObject("SELECT next_attempt_at FROM delivery_work WHERE delivery_id = ?",
+                Timestamp.class, delivery).toInstant()).isEqualTo(retryAt);
+        assertThat(jdbc.queryForObject("SELECT available_at FROM delivery_outbox WHERE delivery_id = ?",
+                Timestamp.class, delivery).toInstant()).isEqualTo(retryAt);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_outbox WHERE delivery_id = ?",
                 Integer.class, delivery)).isEqualTo(1);
     }
@@ -197,6 +207,34 @@ class DeliveryClaimServiceIT {
         attempts.finishExhausted(delivery, 3);
         assertThat(jdbc.queryForObject("SELECT status FROM deliveries WHERE id = ?",
                 String.class, delivery)).isEqualTo("DEAD_LETTERED");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_work WHERE delivery_id = ?",
+                Integer.class, delivery)).isZero();
+    }
+
+    @Test
+    void rejectsInvalidUnclaimedConfigurationWithoutConsumingHttpAttempt() {
+        UUID delivery = due(UUID.randomUUID());
+        assertThat(attempts.rejectUnclaimed(delivery, "CONFIGURATION_INVALID")).isTrue();
+        assertThat(jdbc.queryForObject("SELECT status FROM deliveries WHERE id = ?",
+                String.class, delivery)).isEqualTo("DEAD_LETTERED");
+        assertThat(jdbc.queryForObject("SELECT last_error_code FROM deliveries WHERE id = ?",
+                String.class, delivery)).isEqualTo("CONFIGURATION_INVALID");
+        assertThat(jdbc.queryForObject("SELECT attempt_count FROM deliveries WHERE id = ?",
+                Integer.class, delivery)).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_work WHERE delivery_id = ?",
+                Integer.class, delivery)).isZero();
+    }
+
+    @Test
+    void rejectsInvalidClaimedDestinationOnlyWhileLeaseIsOwned() {
+        UUID delivery = due(UUID.randomUUID());
+        DeliveryClaimService.Lease lease = claims.claim(delivery, "worker-invalid", 2, 20)
+                .orElseThrow();
+        assertThat(attempts.rejectClaimed(lease, "DESTINATION_REJECTED")).isTrue();
+        assertThat(jdbc.queryForObject("SELECT status FROM deliveries WHERE id = ?",
+                String.class, delivery)).isEqualTo("DEAD_LETTERED");
+        assertThat(jdbc.queryForObject("SELECT attempt_count FROM deliveries WHERE id = ?",
+                Integer.class, delivery)).isZero();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_work WHERE delivery_id = ?",
                 Integer.class, delivery)).isZero();
     }

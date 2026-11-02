@@ -141,6 +141,88 @@ def main():
     assert status == 404
     print("E3 Compose delivery list, attempt detail, and tenant isolation checks passed")
 
+    for path, response_status, response_headers in (
+            ("/f1-throttled", 429, {"Retry-After": "120"}),
+            ("/f1-terminal", 400, {})):
+        status, _ = post(simulator, "/__admin/mappings", {
+            "request": {"method": "POST", "urlPath": path},
+            "response": {"status": response_status, "headers": response_headers},
+        }, {})
+        assert status == 201
+        event_type = "acceptance." + path[1:].replace("-", ".")
+        status, retry_endpoint = post(control, "/v1/endpoints", {
+            "name": "F1 " + path,
+            "destination": {"base_url": env["WEBHOOK_SIMULATOR_URL"],
+                            "path": path, "query_params": {},
+                            "headers": {}, "metadata": {}},
+            "authentication": {"type": "NONE"},
+            "event_types": [event_type],
+            "delivery_policy": {"timeout_ms": 3000, "max_attempts": 3,
+                                "max_concurrency": 2},
+        }, bearer)
+        assert status == 201, (status, retry_endpoint)
+        for _ in range(60):
+            projected = query("""
+                SELECT count(*) FROM subscription_projection
+                WHERE organization_id = '%s' AND endpoint_id = '%s'
+                  AND event_type = '%s' AND status = 'ACTIVE';
+            """ % (owner["data"]["organization_id"],
+                   retry_endpoint["data"]["endpoint_id"], event_type))
+            if projected == "1":
+                break
+            time.sleep(1)
+        else:
+            raise AssertionError("F1 endpoint subscription was not projected")
+        status, retry_event = post(ingestion, "/v1/events", {
+            "event_type": event_type, "data": {"check": str(uuid4())},
+        }, {**bearer, "Idempotency-Key": str(uuid4())})
+        assert status == 202
+        locator = retry_event["data"]["event_id"]
+        expected = "RETRY_SCHEDULED" if response_status == 429 else "DEAD_LETTERED"
+        for _ in range(60):
+            row = query("""
+                SELECT delivery.status || '|' || delivery.attempt_count || '|'
+                    || COALESCE(delivery.last_http_status::text, '') || '|'
+                    || (SELECT count(*) FROM delivery_work work
+                        WHERE work.delivery_id = delivery.id)
+                FROM deliveries delivery JOIN routing_progress progress
+                  ON progress.accepted_day = delivery.accepted_day
+                 AND progress.event_id = delivery.event_id
+                 AND progress.organization_id = delivery.organization_id
+                WHERE progress.event_locator = '%s';
+            """ % locator)
+            if row and row.split("|")[0] == expected:
+                break
+            time.sleep(1)
+        else:
+            raise AssertionError(f"F1 delivery did not reach {expected}: {row}")
+        outcome, count, http_status, work_count = row.split("|")
+        assert count == "1" and http_status == str(response_status), row
+        assert work_count == ("1" if response_status == 429 else "0"), row
+        status, detail = get(delivery_api, "/v1/deliveries/" +
+                             query("""
+                                 SELECT delivery.id FROM deliveries delivery
+                                 JOIN routing_progress progress
+                                   ON progress.accepted_day = delivery.accepted_day
+                                  AND progress.event_id = delivery.event_id
+                                  AND progress.organization_id = delivery.organization_id
+                                 WHERE progress.event_locator = '%s';
+                             """ % locator), bearer)
+        assert status == 200 and detail["data"]["attempts"][0]["http_status"] == response_status
+        if response_status == 429:
+            remaining = query("""
+                SELECT EXTRACT(EPOCH FROM (work.next_attempt_at - clock_timestamp()))::int
+                FROM delivery_work work JOIN routing_progress progress
+                  ON progress.accepted_day = work.accepted_day
+                 AND progress.organization_id = work.organization_id
+                JOIN deliveries delivery
+                  ON delivery.accepted_day = work.accepted_day AND delivery.id = work.delivery_id
+                 AND delivery.event_id = progress.event_id
+                WHERE progress.event_locator = '%s';
+            """ % locator)
+            assert int(remaining) >= 60, remaining
+    print("F1 Compose bounded Retry-After and terminal response checks passed")
+
 
 if __name__ == "__main__":
     main()
