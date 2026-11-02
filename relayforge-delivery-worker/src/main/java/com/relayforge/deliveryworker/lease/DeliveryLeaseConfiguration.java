@@ -7,11 +7,14 @@ import com.relayforge.deliveryworker.DeliveryKafkaLifecycle;
 import com.relayforge.deliveryworker.DeliveryProcessor;
 import com.relayforge.deliveryworker.http.DeliveryReferenceClient;
 import com.relayforge.deliveryworker.http.WebhookRequestFactory;
+import com.relayforge.deliveryworker.retry.RetryPolicy;
 import com.relayforge.outbound.DestinationPolicy;
 import com.relayforge.outbound.SafeWebhookClient;
 import java.net.InetAddress;
 import java.net.URI;
 import java.time.Clock;
+import java.time.Duration;
+import java.util.concurrent.ThreadLocalRandom;
 import javax.sql.DataSource;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -103,11 +106,27 @@ public class DeliveryLeaseConfiguration {
     }
 
     @Bean
+    RetryPolicy deliveryRetryPolicy(Environment environment) {
+        RetryPolicy.Settings settings = new RetryPolicy.Settings(
+                Duration.ofSeconds(environment.getProperty(
+                        "relayforge.retry.base-delay-seconds", Long.class, 1L)),
+                Duration.ofSeconds(environment.getProperty(
+                        "relayforge.retry.max-delay-seconds", Long.class, 900L)),
+                Duration.ofSeconds(environment.getProperty(
+                        "relayforge.retry.max-after-seconds", Long.class, 3600L)),
+                Duration.ofSeconds(environment.getProperty(
+                        "relayforge.retry.max-age-seconds", Long.class, 86400L)));
+        return new RetryPolicy(Clock.systemUTC(), () -> ThreadLocalRandom.current().nextDouble(),
+                settings);
+    }
+
+    @Bean
     DeliveryProcessor deliveryProcessor(DeliveryClaimService claims, DeliveryAttemptService attempts,
             DeliveryReferenceClient references, DestinationPolicy policy,
-            SafeWebhookClient client, ObjectMapper json) {
+            SafeWebhookClient client, RetryPolicy retryPolicy, ObjectMapper json) {
         return new DeliveryProcessor(claims, attempts, references, new WebhookRequestFactory(json),
-                policy, client, Clock.systemUTC(), "worker-" + java.util.UUID.randomUUID());
+                policy, client, retryPolicy, Clock.systemUTC(),
+                "worker-" + java.util.UUID.randomUUID());
     }
 
     @Bean

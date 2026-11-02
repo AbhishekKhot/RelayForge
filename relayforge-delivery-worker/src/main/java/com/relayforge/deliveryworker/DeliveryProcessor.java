@@ -5,6 +5,7 @@ import com.relayforge.deliveryworker.http.DeliveryReferenceClient;
 import com.relayforge.deliveryworker.http.WebhookRequestFactory;
 import com.relayforge.deliveryworker.lease.DeliveryAttemptService;
 import com.relayforge.deliveryworker.lease.DeliveryClaimService;
+import com.relayforge.deliveryworker.retry.RetryPolicy;
 import com.relayforge.outbound.Destination;
 import com.relayforge.outbound.DestinationPolicy;
 import com.relayforge.outbound.SafeWebhookClient;
@@ -12,7 +13,6 @@ import com.relayforge.outbound.ValidatedDestination;
 import java.io.IOException;
 import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -22,6 +22,8 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import javax.net.ssl.SSLHandshakeException;
+import javax.net.ssl.SSLPeerUnverifiedException;
 
 public final class DeliveryProcessor implements AutoCloseable {
     private final DeliveryClaimService claims;
@@ -30,6 +32,7 @@ public final class DeliveryProcessor implements AutoCloseable {
     private final WebhookRequestFactory requests;
     private final DestinationPolicy policy;
     private final SafeWebhookClient client;
+    private final RetryPolicy retryPolicy;
     private final Clock clock;
     private final String workerId;
     private final java.util.concurrent.ScheduledExecutorService renewals =
@@ -37,13 +40,15 @@ public final class DeliveryProcessor implements AutoCloseable {
 
     public DeliveryProcessor(DeliveryClaimService claims, DeliveryAttemptService attempts,
             DeliveryReferenceClient references, WebhookRequestFactory requests,
-            DestinationPolicy policy, SafeWebhookClient client, Clock clock, String workerId) {
+            DestinationPolicy policy, SafeWebhookClient client, RetryPolicy retryPolicy,
+            Clock clock, String workerId) {
         this.claims = Objects.requireNonNull(claims);
         this.attempts = Objects.requireNonNull(attempts);
         this.references = Objects.requireNonNull(references);
         this.requests = Objects.requireNonNull(requests);
         this.policy = Objects.requireNonNull(policy);
         this.client = Objects.requireNonNull(client);
+        this.retryPolicy = Objects.requireNonNull(retryPolicy);
         this.clock = Objects.requireNonNull(clock);
         this.workerId = Objects.requireNonNull(workerId);
     }
@@ -62,12 +67,12 @@ public final class DeliveryProcessor implements AutoCloseable {
         }
         int concurrency = endpoint.path("max_concurrency").asInt(0);
         if (concurrency < 1 || concurrency > 1000) {
-            attempts.deferUnclaimed(deliveryId, clock.instant().plusSeconds(30));
+            attempts.rejectUnclaimed(deliveryId, "CONFIGURATION_INVALID");
             return;
         }
         int maxAttempts = endpoint.path("max_attempts").asInt(0);
         if (maxAttempts < 1 || maxAttempts > 20) {
-            attempts.deferUnclaimed(deliveryId, clock.instant().plusSeconds(30));
+            attempts.rejectUnclaimed(deliveryId, "CONFIGURATION_INVALID");
             return;
         }
         if (candidate.attemptCount() >= maxAttempts) {
@@ -76,7 +81,7 @@ public final class DeliveryProcessor implements AutoCloseable {
         }
         long configurationVersion = endpoint.path("version").asLong(-1);
         if (configurationVersion < 1) {
-            attempts.deferUnclaimed(deliveryId, clock.instant().plusSeconds(30));
+            attempts.rejectUnclaimed(deliveryId, "CONFIGURATION_INVALID");
             return;
         }
         var claimed = claims.claim(deliveryId, workerId, concurrency, 200);
@@ -109,17 +114,29 @@ public final class DeliveryProcessor implements AutoCloseable {
                 return;
             }
             JsonNode payload = references.payload(lease.organizationId(), locator);
-            verify(endpoint, payload, lease, locator);
-            ValidatedDestination destination = policy.validate(new Destination(
-                    required(endpoint, "base_url"), required(endpoint, "path"),
-                    stringMap(endpoint.path("query_params")), stringMap(endpoint.path("headers"))));
-            int timeoutMillis = endpoint.path("timeout_ms").asInt(0);
-            if (timeoutMillis < 100 || timeoutMillis > 60000) {
-                throw new IllegalStateException("Invalid delivery configuration");
+            ValidatedDestination destination;
+            int timeoutMillis;
+            try {
+                verify(endpoint, payload, lease, locator);
+                destination = policy.validate(new Destination(
+                        required(endpoint, "base_url"), required(endpoint, "path"),
+                        stringMap(endpoint.path("query_params")),
+                        stringMap(endpoint.path("headers"))));
+                timeoutMillis = endpoint.path("timeout_ms").asInt(0);
+                if (timeoutMillis < 100 || timeoutMillis > 60000) {
+                    throw new IllegalStateException("Invalid delivery configuration");
+                }
+                requests.build(lease.deliveryId(), locator, required(payload, "event_type"),
+                        1, payload.path("payload"), endpoint.path("authentication"),
+                        required(endpoint, "signing_secret"), clock.instant());
+            } catch (RuntimeException invalid) {
+                synchronized (active) {
+                    if (!lost.get()) {
+                        attempts.rejectClaimed(active.get(), "CONFIGURATION_INVALID");
+                    }
+                }
+                return;
             }
-            requests.build(lease.deliveryId(), locator, required(payload, "event_type"),
-                    1, payload.path("payload"), endpoint.path("authentication"),
-                    required(endpoint, "signing_secret"), clock.instant());
             DeliveryAttemptService.Attempt attempt;
             synchronized (active) {
                 if (lost.get() || !claims.owns(active.get())) {
@@ -131,31 +148,27 @@ public final class DeliveryProcessor implements AutoCloseable {
                     required(payload, "event_type"), attempt.number(), payload.path("payload"),
                     endpoint.path("authentication"), required(endpoint, "signing_secret"), clock.instant());
             int httpStatus = 0;
-            String errorCode = null;
             String excerpt = null;
-            boolean terminal = false;
+            String retryAfter = null;
+            RetryPolicy.Failure failure = RetryPolicy.Failure.NONE;
             try {
                 SafeWebhookClient.Result response = client.send(destination, request.body(),
                         Duration.ofMillis(timeoutMillis), request.headers(), () -> !lost.get());
                 httpStatus = response.status();
                 excerpt = redact(response.excerpt(), endpoint, request);
+                retryAfter = response.retryAfter();
             } catch (IOException unavailable) {
-                errorCode = "NETWORK_ERROR";
+                failure = failureFor(unavailable);
             } catch (RuntimeException rejected) {
-                errorCode = "SECURITY_REJECTED";
-                terminal = true;
+                failure = RetryPolicy.Failure.SECURITY;
             }
-            boolean success = httpStatus >= 200 && httpStatus < 300;
-            boolean retryable = httpStatus == 0 || httpStatus == 408 || httpStatus == 429
-                    || httpStatus >= 500;
-            Instant retryAt = retryable && !terminal && attempt.number() < maxAttempts
-                    ? clock.instant().plusSeconds(30) : null;
-            if (!success && errorCode == null) {
-                errorCode = retryAt == null ? "HTTP_TERMINAL" : "HTTP_RETRYABLE";
-            }
+            RetryPolicy.Decision decision = retryPolicy.decide(httpStatus, failure,
+                    attempt.number(), maxAttempts, candidate.createdAt(),
+                    candidate.eventExpiresAt(), retryAfter);
             synchronized (active) {
                 if (!lost.get()) {
-                    attempts.finish(active.get(), attempt, httpStatus, errorCode, excerpt, retryAt);
+                    attempts.finish(active.get(), attempt, httpStatus, decision.errorCode(),
+                            excerpt, decision.nextAttemptAt());
                 }
             }
         } catch (IOException unavailable) {
@@ -163,6 +176,15 @@ public final class DeliveryProcessor implements AutoCloseable {
         } finally {
             renewal.cancel(true);
         }
+    }
+
+    static RetryPolicy.Failure failureFor(IOException unavailable) {
+        for (Throwable cause = unavailable; cause != null; cause = cause.getCause()) {
+            if (cause instanceof SSLHandshakeException || cause instanceof SSLPeerUnverifiedException) {
+                return RetryPolicy.Failure.TLS;
+            }
+        }
+        return RetryPolicy.Failure.NETWORK;
     }
 
     private void verify(JsonNode endpoint, JsonNode payload, DeliveryClaimService.Lease lease,

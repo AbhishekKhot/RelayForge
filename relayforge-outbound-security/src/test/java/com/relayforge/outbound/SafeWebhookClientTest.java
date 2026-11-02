@@ -85,6 +85,34 @@ class SafeWebhookClientTest {
     }
 
     @Test
+    void returnsBoundedRetryAfterWithoutExposingOtherHeaders() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/throttled", exchange -> {
+            exchange.getResponseHeaders().add("Retry-After", "120");
+            exchange.getResponseHeaders().add("Authorization", "secret-should-not-leak");
+            exchange.sendResponseHeaders(429, -1);
+            exchange.close();
+        });
+        server.start();
+        try {
+            URI simulator = URI.create("http://localhost:" + server.getAddress().getPort());
+            DestinationPolicy policy = new DestinationPolicy(
+                    host -> new InetAddress[]{InetAddress.getByName("127.0.0.1")}, true, simulator);
+            ValidatedDestination destination = policy.validate(new Destination(
+                    simulator.toString(), "/throttled", Map.of(), Map.of()));
+            try (SafeWebhookClient client = new SafeWebhookClient(policy)) {
+                SafeWebhookClient.Result result = client.send(destination, new byte[0],
+                        Duration.ofSeconds(2), Map.of(), () -> true);
+                assertThat(result.status()).isEqualTo(429);
+                assertThat(result.retryAfter()).isEqualTo("120");
+                assertThat(result.toString()).doesNotContain("secret-should-not-leak");
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void doesNotFollowRedirectToAnotherDestination() throws Exception {
         AtomicInteger targetCalls = new AtomicInteger();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);

@@ -19,7 +19,8 @@ public final class DeliveryAttemptService {
     public WorkReference candidate(UUID deliveryId) {
         Objects.requireNonNull(deliveryId);
         return jdbc.query("""
-                SELECT work.organization_id, work.endpoint_id, delivery.attempt_count
+                SELECT work.organization_id, work.endpoint_id, delivery.attempt_count,
+                    delivery.created_at, work.event_expires_at
                 FROM delivery_work work JOIN deliveries delivery
                     ON delivery.accepted_day = work.accepted_day AND delivery.id = work.delivery_id
                     AND delivery.organization_id = work.organization_id
@@ -27,7 +28,8 @@ public final class DeliveryAttemptService {
                     AND work.status IN ('PENDING', 'ENQUEUED', 'RETRY_SCHEDULED')
                     AND work.next_attempt_at <= clock_timestamp()
                 """, (row, index) -> new WorkReference(row.getObject(1, UUID.class),
-                row.getObject(2, UUID.class), row.getInt(3)), deliveryId)
+                row.getObject(2, UUID.class), row.getInt(3),
+                row.getTimestamp(4).toInstant(), row.getTimestamp(5).toInstant()), deliveryId)
                 .stream().findFirst().orElse(null);
     }
 
@@ -58,6 +60,74 @@ public final class DeliveryAttemptService {
                     """, row.day(), deliveryId, row.organizationId());
             jdbc.update("DELETE FROM delivery_work WHERE delivery_id = ?", deliveryId);
         });
+    }
+
+    public boolean rejectUnclaimed(UUID deliveryId, String errorCode) {
+        Objects.requireNonNull(deliveryId);
+        validateErrorCode(errorCode);
+        return Boolean.TRUE.equals(transactions.execute(status -> {
+            var rows = jdbc.query("""
+                    SELECT work.accepted_day, work.organization_id
+                    FROM delivery_work work JOIN deliveries delivery
+                        ON delivery.accepted_day = work.accepted_day AND delivery.id = work.delivery_id
+                        AND delivery.organization_id = work.organization_id
+                    WHERE work.delivery_id = ?
+                        AND work.status IN ('PENDING', 'ENQUEUED', 'RETRY_SCHEDULED')
+                    FOR UPDATE OF work, delivery
+                    """, (row, index) -> new Rejected(row.getObject(1, java.time.LocalDate.class),
+                    row.getObject(2, UUID.class)), deliveryId);
+            if (rows.size() != 1) {
+                return false;
+            }
+            markRejected(rows.getFirst(), deliveryId, errorCode);
+            jdbc.update("DELETE FROM delivery_work WHERE delivery_id = ?", deliveryId);
+            return true;
+        }));
+    }
+
+    public boolean rejectClaimed(DeliveryClaimService.Lease lease, String errorCode) {
+        Objects.requireNonNull(lease);
+        validateErrorCode(errorCode);
+        return Boolean.TRUE.equals(transactions.execute(status -> {
+            var rows = jdbc.query("""
+                    SELECT work.accepted_day, work.organization_id
+                    FROM delivery_work work JOIN deliveries delivery
+                        ON delivery.accepted_day = work.accepted_day AND delivery.id = work.delivery_id
+                        AND delivery.organization_id = work.organization_id
+                    WHERE work.delivery_id = ? AND work.organization_id = ?
+                        AND work.status = 'IN_PROGRESS' AND work.lease_token = ?
+                        AND work.lease_owner = ? AND work.lease_expires_at > clock_timestamp()
+                        AND work.processing_deadline_at > clock_timestamp()
+                        AND delivery.status = 'IN_PROGRESS' AND delivery.lease_token = ?
+                        AND delivery.version = ?
+                    FOR UPDATE OF work, delivery
+                    """, (row, index) -> new Rejected(row.getObject(1, java.time.LocalDate.class),
+                    row.getObject(2, UUID.class)), lease.deliveryId(), lease.organizationId(),
+                    lease.token(), lease.workerId(), lease.token(), lease.version());
+            if (rows.size() != 1) {
+                return false;
+            }
+            markRejected(rows.getFirst(), lease.deliveryId(), errorCode);
+            jdbc.update("DELETE FROM delivery_work WHERE delivery_id = ? AND lease_token = ?",
+                    lease.deliveryId(), lease.token());
+            return true;
+        }));
+    }
+
+    private void markRejected(Rejected row, UUID deliveryId, String errorCode) {
+        jdbc.update("""
+                UPDATE deliveries SET status = 'DEAD_LETTERED', last_error_code = ?,
+                    lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
+                    processing_deadline_at = NULL, completed_at = clock_timestamp(),
+                    updated_at = clock_timestamp(), version = version + 1
+                WHERE accepted_day = ? AND id = ? AND organization_id = ?
+                """, errorCode, row.day(), deliveryId, row.organizationId());
+    }
+
+    private void validateErrorCode(String errorCode) {
+        if (errorCode == null || !errorCode.matches("[A-Z_]{1,80}")) {
+            throw new IllegalArgumentException("Invalid delivery error code");
+        }
     }
 
     public void deferUnclaimed(UUID deliveryId, Instant retryAt) {
@@ -240,9 +310,13 @@ public final class DeliveryAttemptService {
     public record Attempt(UUID id, UUID eventId, String locator, int number) {
     }
 
-    public record WorkReference(UUID organizationId, UUID endpointId, int attemptCount) {
+    public record WorkReference(UUID organizationId, UUID endpointId, int attemptCount,
+            Instant createdAt, Instant eventExpiresAt) {
     }
 
     private record Exhausted(java.time.LocalDate day, UUID organizationId, int attemptCount) {
+    }
+
+    private record Rejected(java.time.LocalDate day, UUID organizationId) {
     }
 }

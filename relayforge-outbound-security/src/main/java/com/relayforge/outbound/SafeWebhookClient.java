@@ -109,7 +109,12 @@ public final class SafeWebhookClient implements AutoCloseable {
                     excerpt = sanitize(bytes);
                 }
             }
-            return new Result(response.getCode(), excerpt);
+            String retryAfter = null;
+            var header = response.getFirstHeader("Retry-After");
+            if (header != null && header.getValue() != null && header.getValue().length() <= 80) {
+                retryAfter = header.getValue();
+            }
+            return new Result(response.getCode(), excerpt, retryAfter);
             });
         });
         long deadline = System.nanoTime() + timeout.toNanos();
@@ -144,6 +149,10 @@ public final class SafeWebhookClient implements AutoCloseable {
             }
             throw new IOException("Webhook request failed", failed.getCause());
         } catch (RuntimeException invalid) {
+            if (invalid instanceof UnsafeDestinationException
+                    || invalid instanceof InvalidDestinationException) {
+                throw invalid;
+            }
             throw new IOException("Webhook request failed", invalid);
         } finally {
             if (!pending.isDone()) {
@@ -163,7 +172,10 @@ public final class SafeWebhookClient implements AutoCloseable {
         return result.toString();
     }
 
-    public record Result(int status, String excerpt) {
+    public record Result(int status, String excerpt, String retryAfter) {
+        public Result(int status, String excerpt) {
+            this(status, excerpt, null);
+        }
     }
 
     @Override
