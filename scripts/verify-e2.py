@@ -161,6 +161,18 @@ def main():
                                 "max_concurrency": 2},
         }, bearer)
         assert status == 201, (status, retry_endpoint)
+        for _ in range(60):
+            projected = query("""
+                SELECT count(*) FROM subscription_projection
+                WHERE organization_id = '%s' AND endpoint_id = '%s'
+                  AND event_type = '%s' AND status = 'ACTIVE';
+            """ % (owner["data"]["organization_id"],
+                   retry_endpoint["data"]["endpoint_id"], event_type))
+            if projected == "1":
+                break
+            time.sleep(1)
+        else:
+            raise AssertionError("F1 endpoint subscription was not projected")
         status, retry_event = post(ingestion, "/v1/events", {
             "event_type": event_type, "data": {"check": str(uuid4())},
         }, {**bearer, "Idempotency-Key": str(uuid4())})
