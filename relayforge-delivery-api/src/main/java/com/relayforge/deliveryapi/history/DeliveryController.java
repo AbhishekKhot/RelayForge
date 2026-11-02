@@ -1,6 +1,7 @@
 package com.relayforge.deliveryapi.history;
 
 import com.relayforge.apisupport.RequestIdFilter;
+import com.relayforge.deliveryapi.replay.DeliveryReplayService;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -8,21 +9,27 @@ import java.util.UUID;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.http.ResponseEntity;
 
 @RestController
 @ConditionalOnProperty(name = "relayforge.database.username")
 public final class DeliveryController {
     private final DeliveryApiAuthenticator authenticator;
     private final DeliveryQueryService queries;
+    private final DeliveryReplayService replays;
 
-    public DeliveryController(DeliveryApiAuthenticator authenticator, DeliveryQueryService queries) {
+    public DeliveryController(DeliveryApiAuthenticator authenticator, DeliveryQueryService queries,
+            DeliveryReplayService replays) {
         this.authenticator = authenticator;
         this.queries = queries;
+        this.replays = replays;
     }
 
     @GetMapping("/v1/deliveries")
@@ -50,5 +57,21 @@ public final class DeliveryController {
         DeliveryQueryService.DetailView found = queries.detail(organization, deliveryId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         return Map.of("data", found, "request_id", RequestIdFilter.current(request));
+    }
+
+    @PostMapping("/v1/deliveries/{deliveryId}/replay")
+    public ResponseEntity<Map<String, Object>> replay(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestHeader(value = "Idempotency-Key", required = false) String key,
+            @PathVariable UUID deliveryId, @RequestBody(required = false) ReplayRequest body,
+            HttpServletRequest request) {
+        UUID organization = authenticator.authenticateReplay(authorization);
+        var result = replays.replay(organization, deliveryId, key,
+                body == null ? null : body.reason(), RequestIdFilter.current(request));
+        return ResponseEntity.accepted().body(Map.of("data", result,
+                "request_id", RequestIdFilter.current(request)));
+    }
+
+    public record ReplayRequest(String reason) {
     }
 }

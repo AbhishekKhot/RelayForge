@@ -168,8 +168,15 @@ class OrganizationProvisioningIT {
         String key = rotated.getBody().path("data").path("api_key").asText();
         assertThat(get("/v1/auth/check?scope=deliveries:read", key).getStatusCode())
                 .isEqualTo(HttpStatus.OK);
+        assertThat(get("/v1/auth/check?scope=deliveries:replay", key).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN);
         assertThat(get("/v1/auth/check?scope=events:read", key).getStatusCode())
                 .isEqualTo(HttpStatus.FORBIDDEN);
+        ResponseEntity<JsonNode> replayKey = post("/v1/api-keys/" + key.split("_")[2] + "/rotate",
+                PROVISIONING_CREDENTIAL, Map.of("scopes", java.util.List.of("deliveries:replay")));
+        assertThat(get("/v1/auth/check?scope=deliveries:replay",
+                replayKey.getBody().path("data").path("api_key").asText()).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
     }
 
     @Test

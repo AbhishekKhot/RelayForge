@@ -26,6 +26,13 @@ def post(base, path, body, headers):
         return response.status, json.load(response)
 
 
+def post_status(base, path, body, headers):
+    try:
+        return post(base, path, body, headers)
+    except HTTPError as error:
+        return error.code, json.load(error)
+
+
 def get(base, path, headers):
     request = Request(base + path, headers=headers, method="GET")
     try:
@@ -57,7 +64,7 @@ def main():
     key_id = initial_key.split("_")[2]
     status, rotated = post(control, f"/v1/api-keys/{key_id}/rotate",
                            {"scopes": ["events:write", "endpoints:write",
-                                       "deliveries:read"]}, admin)
+                                       "deliveries:read", "deliveries:replay"]}, admin)
     assert status == 201
     bearer = {"Authorization": "Bearer " + rotated["data"]["api_key"]}
     status, endpoint = post(control, "/v1/endpoints", {
@@ -142,6 +149,7 @@ def main():
     print("E3 Compose delivery list, attempt detail, and tenant isolation checks passed")
 
     throttled_delivery = None
+    terminal_delivery = None
     for path, response_status, response_headers in (
             ("/f1-throttled", 429, {"Retry-After": "120"}),
             ("/f1-terminal", 400, {})):
@@ -223,6 +231,8 @@ def main():
                 WHERE progress.event_locator = '%s';
             """ % locator)
             assert int(remaining) >= 60, remaining
+        else:
+            terminal_delivery = retry_delivery_id
     print("F1 Compose bounded Retry-After and terminal response checks passed")
 
     assert throttled_delivery
@@ -320,6 +330,51 @@ def main():
     assert sorted(json.loads(base64.b64decode(item["bodyAsBase64"]))["attempt_number"]
                   for item in journal["requests"]) == [1, 2]
     print("F2 Compose uncertain receiver success retries the same delivery ID")
+
+    assert terminal_delivery
+    status, _ = post(simulator, "/__admin/mappings", {
+        "priority": 1,
+        "request": {"method": "POST", "urlPath": "/f1-terminal"},
+        "response": {"status": 204},
+    }, {})
+    assert status == 201
+    replay_path = "/v1/deliveries/" + terminal_delivery + "/replay"
+    replay_headers = {**bearer, "Idempotency-Key": str(uuid4())}
+    status, replay = post(delivery_api, replay_path,
+                          {"reason": "Destination recovered"}, replay_headers)
+    assert status == 202, (status, replay)
+    replay_id = replay["data"]["replay_delivery_id"]
+    assert replay_id != terminal_delivery and replay["data"]["generation"] == 2
+    status, repeated = post(delivery_api, replay_path,
+                             {"reason": "Destination recovered"}, replay_headers)
+    assert status == 202 and repeated["data"]["replay_delivery_id"] == replay_id
+    status, _ = post_status(delivery_api, replay_path,
+                             {"reason": "Changed"}, replay_headers)
+    assert status == 409
+    status, _ = post_status(delivery_api, replay_path,
+                             {"reason": "Destination recovered"},
+                             {**other_bearer, "Idempotency-Key": str(uuid4())})
+    assert status == 403
+    for _ in range(90):
+        row = query("""
+            SELECT status || '|' || attempt_count FROM deliveries WHERE id = '%s';
+        """ % replay_id)
+        if row == "SUCCEEDED|1":
+            break
+        time.sleep(1)
+    else:
+        raise AssertionError(f"F3 replay did not succeed: {row}")
+    assert query("SELECT status FROM deliveries WHERE id = '%s';" % terminal_delivery) == "DEAD_LETTERED"
+    assert query("SELECT count(*) FROM replay_requests WHERE original_delivery_id = '%s' "
+                 "AND replay_delivery_id = '%s';" % (terminal_delivery, replay_id)) == "1"
+    assert query("SELECT count(*) FROM delivery_audit_records WHERE delivery_id = '%s' "
+                 "AND action = 'delivery.replayed';" % replay_id) == "1"
+    status, journal = post(simulator, "/__admin/requests/find", {
+        "method": "POST", "url": "/f1-terminal",
+        "bodyPatterns": [{"contains": replay_id}],
+    }, {})
+    assert status == 200 and len(journal["requests"]) == 1
+    print("F3 Compose replay creates audited generation and new webhook identity")
 
 
 if __name__ == "__main__":

@@ -17,7 +17,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 public final class DeliveryApiAuthenticator {
     private final HttpClient http;
-    private final URI checkUrl;
+    private final URI readCheckUrl;
+    private final URI replayCheckUrl;
     private final ObjectMapper json;
 
     public DeliveryApiAuthenticator(URI controlUrl, ObjectMapper json) {
@@ -27,13 +28,22 @@ public final class DeliveryApiAuthenticator {
                 || controlUrl.getRawFragment() != null) {
             throw new IllegalStateException("Control-plane URL is unavailable");
         }
-        this.checkUrl = controlUrl.resolve("/v1/auth/check?scope=deliveries:read");
+        this.readCheckUrl = controlUrl.resolve("/v1/auth/check?scope=deliveries:read");
+        this.replayCheckUrl = controlUrl.resolve("/v1/auth/check?scope=deliveries:replay");
         this.json = Objects.requireNonNull(json);
         this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2))
                 .followRedirects(HttpClient.Redirect.NEVER).build();
     }
 
     public UUID authenticate(String authorization) {
+        return authenticate(authorization, readCheckUrl);
+    }
+
+    public UUID authenticateReplay(String authorization) {
+        return authenticate(authorization, replayCheckUrl);
+    }
+
+    private UUID authenticate(String authorization, URI checkUrl) {
         if (authorization == null || !authorization.startsWith("Bearer ")
                 || authorization.length() > 135) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);

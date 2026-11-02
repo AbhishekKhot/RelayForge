@@ -37,6 +37,8 @@ class DeliveryApiAuthenticatorTest {
                     "http://127.0.0.1:" + server.getAddress().getPort()), new ObjectMapper());
             assertThat(auth.authenticate("Bearer permitted")).isEqualTo(organization);
             assertThat(scope).hasValue("scope=deliveries:read");
+            assertThat(auth.authenticateReplay("Bearer permitted")).isEqualTo(organization);
+            assertThat(scope).hasValue("scope=deliveries:replay");
             assertThatThrownBy(() -> auth.authenticate("Bearer denied"))
                     .isInstanceOfSatisfying(ResponseStatusException.class, failure ->
                             assertThat(failure.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN));
