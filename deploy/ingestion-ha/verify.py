@@ -154,6 +154,40 @@ def delivery_count(table, organization_id):
     return int(result.stdout.strip())
 
 
+def delivery_sql(statement):
+    result = run(HA + ["exec", "-T", "postgres", "sh", "-c",
+                       'psql -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d relayforge_delivery'],
+                 input=statement + "\n", capture_output=True)
+    return result.stdout.strip()
+
+
+def verify_expired_lease_recovery(organization_id):
+    delivery = delivery_sql("SELECT delivery_id FROM delivery_work WHERE organization_id = '%s' LIMIT 1;"
+                            % organization_id)
+    assert delivery
+    token = uuid4()
+    delivery_sql("""BEGIN;
+        UPDATE delivery_work SET status = 'IN_PROGRESS', lease_owner = 'acceptance',
+            lease_token = '%s', lease_expires_at = clock_timestamp() - interval '1 second',
+            processing_deadline_at = clock_timestamp() + interval '3 minutes'
+        WHERE delivery_id = '%s';
+        UPDATE deliveries SET status = 'IN_PROGRESS', lease_owner = 'acceptance',
+            lease_token = '%s', lease_expires_at = clock_timestamp() - interval '1 second',
+            processing_deadline_at = clock_timestamp() + interval '3 minutes'
+        WHERE id = '%s';
+        COMMIT;""" % (token, delivery, token, delivery))
+    for _ in range(30):
+        state = delivery_sql("""SELECT work.status || ':' || delivery.status || ':' ||
+            (work.lease_token IS NULL)::text || ':' || (delivery.lease_token IS NULL)::text
+            FROM delivery_work work JOIN deliveries delivery
+              ON delivery.accepted_day = work.accepted_day AND delivery.id = work.delivery_id
+            WHERE work.delivery_id = '%s';""" % delivery)
+        if state == "PENDING:PENDING:true:true":
+            return
+        time.sleep(2)
+    raise AssertionError("Expired delivery lease was not recovered")
+
+
 def wait_routing(ingestion, locator, bearer, expected_status, expected_count):
     for _ in range(60):
         status, event = get(ingestion, f"/v1/events/{locator}", bearer)
@@ -239,7 +273,8 @@ def verify_routing(env, control, ingestion):
     assert status == 202
     wait_routing(ingestion, zero["data"]["event_id"], bearer, "NO_SUBSCRIBERS", 0)
     assert delivery_count("deliveries", organization_id) == 2
-    print("D3 HA routing, zero-match, duplicate Kafka, and projection checks passed")
+    verify_expired_lease_recovery(organization_id)
+    print("D3 routing and E1 expired-lease recovery checks passed")
 
 
 def restore_base():

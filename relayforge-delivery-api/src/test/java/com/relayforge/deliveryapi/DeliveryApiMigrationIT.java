@@ -37,13 +37,24 @@ class DeliveryApiMigrationIT {
 
     @Test
     void startupMigratesEmptyDatabase() throws Exception {
-        assertThat(flyway.info().current().getVersion().toString()).isEqualTo("1");
+        assertThat(flyway.info().current().getVersion().toString()).isEqualTo("2");
         try (var connection = DriverManager.getConnection(
                 DATABASE.getJdbcUrl(), DATABASE.getUsername(), DATABASE.getPassword());
                 var statement = connection.createStatement();
                 var result = statement.executeQuery("SELECT count(*) FROM deliveries")) {
             result.next();
             assertThat(result.getLong(1)).isZero();
+        }
+        try (var connection = DriverManager.getConnection(
+                DATABASE.getJdbcUrl(), DATABASE.getUsername(), DATABASE.getPassword());
+                var statement = connection.createStatement();
+                var result = statement.executeQuery("""
+                        SELECT count(*) FROM information_schema.columns
+                        WHERE table_name IN ('deliveries', 'delivery_work')
+                            AND column_name = 'processing_deadline_at'
+                        """)) {
+            result.next();
+            assertThat(result.getLong(1)).isEqualTo(2);
         }
     }
 
