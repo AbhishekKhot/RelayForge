@@ -33,9 +33,13 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>com.relayforge</groupId>
-            <artifactId>relayforge-delivery-api</artifactId>
-            <version>${project.version}</version>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

@@ -32,7 +32,8 @@ class RoutingServiceIT {
     static void startDatabase() {
         DATABASE.start();
         Flyway.configure().dataSource(DATABASE.getJdbcUrl(), DATABASE.getUsername(), DATABASE.getPassword())
-                .locations("classpath:db/migration").load().migrate();
+                .locations("filesystem:../relayforge-delivery-api/src/main/resources/db/migration")
+                .load().migrate();
         var dataSource = new DriverManagerDataSource(DATABASE.getJdbcUrl(),
                 DATABASE.getUsername(), DATABASE.getPassword());
         jdbc = new JdbcTemplate(dataSource);
