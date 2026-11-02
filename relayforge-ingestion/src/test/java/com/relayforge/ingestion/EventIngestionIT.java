@@ -87,6 +87,7 @@ class EventIngestionIT {
         registry.add("relayforge.delivery.internal-url", () -> "http://127.0.0.1:" + DELIVERY.getAddress().getPort());
         registry.add("relayforge.event-summary.credential", () -> "test-summary-credential-01234567890123456789");
         registry.add("relayforge.router.event-credential", () -> "test-router-credential-01234567890123456789");
+        registry.add("relayforge.delivery.payload-credential", () -> "test-delivery-payload-credential-0123456789");
         registry.add("relayforge.ingestion.acceptance-enabled", () -> "true");
     }
 
@@ -104,6 +105,28 @@ class EventIngestionIT {
 
     @Autowired
     private IngestionRepository repository;
+
+    @Test
+    void internalPayloadReadRequiresCredentialAndExactTenantLocator() {
+        ResponseEntity<JsonNode> created = publish("good-key", "payload-" + UUID.randomUUID(),
+                "payment.completed", Map.of("amount", 1700));
+        String locator = created.getBody().path("data").path("event_id").asText();
+        String path = "/internal/v1/events/" + locator + "/payload?organization_id=" + ORGANIZATION;
+        assertThat(client.getForEntity(path, JsonNode.class).getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-RelayForge-Delivery-Payload-Credential",
+                "test-delivery-payload-credential-0123456789");
+        ResponseEntity<JsonNode> found = client.exchange(path, HttpMethod.GET,
+                new HttpEntity<>(headers), JsonNode.class);
+        assertThat(found.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(found.getBody().path("organization_id").asText()).isEqualTo(ORGANIZATION.toString());
+        assertThat(found.getBody().path("event_id").asText()).isEqualTo(EventLocator.decode(locator)
+                .eventId().toString());
+        assertThat(found.getBody().path("payload").path("amount").asInt()).isEqualTo(1700);
+        assertThat(client.exchange(path.replace(ORGANIZATION.toString(), UUID.randomUUID().toString()),
+                HttpMethod.GET, new HttpEntity<>(headers), JsonNode.class).getStatusCode())
+                .isEqualTo(HttpStatus.NOT_FOUND);
+    }
 
     @Test
     void internalRoutingLookupRequiresCredentialAndTenant() {

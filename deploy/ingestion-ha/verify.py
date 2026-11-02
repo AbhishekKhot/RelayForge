@@ -142,6 +142,7 @@ def verify():
     assert count("events", organization_id) == 2
     assert count("ingestion_outbox", organization_id) == 2
     verify_routing(env, control, ingestion)
+    run(["python3", "scripts/verify-e2.py"])
     print("C1 HA event acceptance, idempotency, and standby-loss checks passed")
 
 
@@ -161,21 +162,32 @@ def delivery_sql(statement):
     return result.stdout.strip()
 
 
-def verify_expired_lease_recovery(organization_id):
-    delivery = delivery_sql("SELECT delivery_id FROM delivery_work WHERE organization_id = '%s' LIMIT 1;"
-                            % organization_id)
-    assert delivery
+def verify_expired_lease_recovery():
+    organization_id = uuid4()
+    event = uuid4()
+    endpoint = uuid4()
+    delivery = uuid4()
     token = uuid4()
     delivery_sql("""BEGIN;
-        UPDATE delivery_work SET status = 'IN_PROGRESS', lease_owner = 'acceptance',
-            lease_token = '%s', lease_expires_at = clock_timestamp() - interval '1 second',
-            processing_deadline_at = clock_timestamp() + interval '3 minutes'
-        WHERE delivery_id = '%s';
-        UPDATE deliveries SET status = 'IN_PROGRESS', lease_owner = 'acceptance',
-            lease_token = '%s', lease_expires_at = clock_timestamp() - interval '1 second',
-            processing_deadline_at = clock_timestamp() + interval '3 minutes'
-        WHERE id = '%s';
-        COMMIT;""" % (token, delivery, token, delivery))
+        INSERT INTO routing_progress (accepted_day, event_id, organization_id,
+            event_accepted_at, ingestion_shard_id, delivery_shard_id, status)
+        VALUES (current_date, '%s', '%s',
+            current_date::timestamp AT TIME ZONE 'UTC', 'ing-a', 'dlv-a', 'ROUTED');
+        INSERT INTO deliveries (accepted_day, id, organization_id, event_id, endpoint_id,
+            status, lease_owner, lease_token, lease_expires_at, processing_deadline_at,
+            claim_count)
+        VALUES (current_date, '%s', '%s', '%s', '%s', 'IN_PROGRESS', 'acceptance',
+            '%s', clock_timestamp() - interval '1 second',
+            clock_timestamp() + interval '3 minutes', 1);
+        INSERT INTO delivery_work (delivery_id, accepted_day, organization_id, endpoint_id,
+            status, event_expires_at, next_attempt_at, lease_owner, lease_token,
+            lease_expires_at, processing_deadline_at, claim_count)
+        VALUES ('%s', current_date, '%s', '%s', 'IN_PROGRESS',
+            clock_timestamp() + interval '90 days', clock_timestamp(), 'acceptance',
+            '%s', clock_timestamp() - interval '1 second',
+            clock_timestamp() + interval '3 minutes', 1);
+        COMMIT;""" % (event, organization_id, delivery, organization_id, event,
+                      endpoint, token, delivery, organization_id, endpoint, token))
     for _ in range(30):
         state = delivery_sql("""SELECT work.status || ':' || delivery.status || ':' ||
             (work.lease_token IS NULL)::text || ':' || (delivery.lease_token IS NULL)::text
@@ -214,6 +226,7 @@ def wait_router_caught_up(shard):
 
 
 def verify_routing(env, control, ingestion):
+    run(HA + ["stop", "delivery-worker"])
     admin = {"X-Provisioning-Credential": env["TRUSTED_PROVISIONING_CREDENTIAL"],
              "Idempotency-Key": str(uuid4())}
     status, organization = post(control, "/v1/organizations", {"name": "D3 routing acceptance"}, admin)
@@ -273,7 +286,9 @@ def verify_routing(env, control, ingestion):
     assert status == 202
     wait_routing(ingestion, zero["data"]["event_id"], bearer, "NO_SUBSCRIBERS", 0)
     assert delivery_count("deliveries", organization_id) == 2
-    verify_expired_lease_recovery(organization_id)
+    run(HA + ["start", "delivery-worker"])
+    wait_healthy("delivery-worker")
+    verify_expired_lease_recovery()
     print("D3 routing and E1 expired-lease recovery checks passed")
 
 

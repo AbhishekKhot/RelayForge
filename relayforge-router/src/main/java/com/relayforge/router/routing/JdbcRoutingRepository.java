@@ -17,17 +17,26 @@ public final class JdbcRoutingRepository implements RoutingRepository {
     @Override
     public void initialize(VerifiedEvent event, int maxTargets) {
         jdbc.update("""
-                INSERT INTO routing_progress (accepted_day, event_id, organization_id, event_accepted_at,
-                    ingestion_shard_id, delivery_shard_id, status)
-                VALUES (?, ?, ?, ?, ?, ?, 'SELECTING')
+                INSERT INTO routing_progress (accepted_day, event_id, organization_id, event_locator,
+                    event_accepted_at, ingestion_shard_id, delivery_shard_id, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'SELECTING')
                 ON CONFLICT (accepted_day, event_id, organization_id) DO NOTHING
                 """, event.acceptedDay(), event.eventId(), event.organizationId(),
-                Timestamp.from(event.acceptedAt()), event.ingestionShardId(), event.deliveryShardId());
+                event.eventLocator(), Timestamp.from(event.acceptedAt()),
+                event.ingestionShardId(), event.deliveryShardId());
         Progress progress = lockProgress(event);
         if (!progress.ingestionShardId().equals(event.ingestionShardId())
                 || !progress.deliveryShardId().equals(event.deliveryShardId())
-                || !progress.acceptedAt().equals(event.acceptedAt())) {
+                || !progress.acceptedAt().equals(event.acceptedAt())
+                || progress.eventLocator() != null
+                && !progress.eventLocator().equals(event.eventLocator())) {
             throw new IllegalStateException("Routing reference changed");
+        }
+        if (progress.eventLocator() == null) {
+            jdbc.update("""
+                    UPDATE routing_progress SET event_locator = ?, updated_at = clock_timestamp()
+                    WHERE accepted_day = ? AND event_id = ? AND organization_id = ?
+                    """, event.eventLocator(), event.acceptedDay(), event.eventId(), event.organizationId());
         }
         if (!"SELECTING".equals(progress.status())) {
             return;
@@ -134,16 +143,17 @@ public final class JdbcRoutingRepository implements RoutingRepository {
 
     private Progress lockProgress(VerifiedEvent event) {
         return jdbc.query("""
-                SELECT status, last_endpoint_id, event_accepted_at, ingestion_shard_id, delivery_shard_id
+                SELECT status, last_endpoint_id, event_accepted_at, ingestion_shard_id, delivery_shard_id,
+                    event_locator
                 FROM routing_progress WHERE accepted_day = ? AND event_id = ? AND organization_id = ? FOR UPDATE
                 """, (row, index) -> new Progress(row.getString(1), row.getObject(2, UUID.class),
-                row.getTimestamp(3).toInstant(), row.getString(4), row.getString(5)),
+                row.getTimestamp(3).toInstant(), row.getString(4), row.getString(5), row.getString(6)),
                 event.acceptedDay(), event.eventId(), event.organizationId())
                 .stream().findFirst().orElseThrow(() -> new IllegalStateException("Routing progress missing"));
     }
 
     private record Progress(String status, UUID lastEndpointId, java.time.Instant acceptedAt,
-            String ingestionShardId, String deliveryShardId) {
+            String ingestionShardId, String deliveryShardId, String eventLocator) {
     }
 
     private record Target(UUID endpointId, UUID subscriptionId, long sourceVersion) {

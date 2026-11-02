@@ -42,7 +42,8 @@ public final class EndpointController {
                 RequestIdFilter.current(request));
         return ResponseEntity.status(HttpStatus.CREATED).eTag("\"1\"").body(Map.of("data", Map.of(
                 "endpoint_id", created.id(), "name", created.name(), "status", "ACTIVE",
-                "event_types", created.eventTypes(), "created_at", created.createdAt(), "version", 1),
+                "event_types", created.eventTypes(), "created_at", created.createdAt(), "version", 1,
+                "signing_secret", created.signingSecret()),
                 "request_id", RequestIdFilter.current(request)));
     }
 

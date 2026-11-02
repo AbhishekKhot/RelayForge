@@ -14,6 +14,16 @@
             <version>${project.version}</version>
         </dependency>
         <dependency>
+            <groupId>com.relayforge</groupId>
+            <artifactId>relayforge-outbound-security</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.relayforge</groupId>
+            <artifactId>relayforge-consumer-support</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-jdbc</artifactId>
         </dependency>

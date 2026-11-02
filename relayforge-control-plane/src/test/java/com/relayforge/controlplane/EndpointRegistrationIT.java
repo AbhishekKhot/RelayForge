@@ -69,6 +69,7 @@ class EndpointRegistrationIT {
         registry.add("relayforge.database.password", DATABASE::getPassword);
         registry.add("relayforge.provisioning.credential", () -> PROVISIONING_CREDENTIAL);
         registry.add("relayforge.router.config-credential", () -> "test-config-credential-01234567890123456789");
+        registry.add("relayforge.delivery.config-credential", () -> "test-delivery-config-credential-0123456789");
         registry.add("relayforge.security.api-key-hmac-key", () -> "0123456789abcdef".repeat(4));
         registry.add("relayforge.encryption.local-keys", () -> "local-v1:" + "fedcba9876543210".repeat(4));
         registry.add("relayforge.encryption.active-version", () -> "local-v1");
@@ -112,17 +113,70 @@ class EndpointRegistrationIT {
     }
 
     @Test
+    void internalDeliveryConfigurationRequiresCredentialAndTenantAndUsesCurrentSecret() throws Exception {
+        Credentials owner = credentials();
+        Credentials other = credentials();
+        Map<String, Object> body = new HashMap<>(request(simulatorUrl()));
+        body.put("authentication", Map.of("type", "BEARER", "token", "delivery-private-token"));
+        ResponseEntity<JsonNode> created = register(owner.key(), body);
+        String id = created.getBody().path("data").path("endpoint_id").asText();
+        String initialSecret = created.getBody().path("data").path("signing_secret").asText();
+        String path = "/internal/v1/organizations/" + owner.organizationId() + "/endpoints/" + id
+                + "/delivery";
+        assertThat(client.getForEntity(path, JsonNode.class).getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-RelayForge-Delivery-Config-Credential",
+                "test-delivery-config-credential-0123456789");
+        ResponseEntity<JsonNode> read = client.exchange(path, HttpMethod.GET,
+                new HttpEntity<>(headers), JsonNode.class);
+        assertThat(read.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(read.getBody().path("organization_id").asText()).isEqualTo(owner.organizationId().toString());
+        assertThat(read.getBody().path("endpoint_id").asText()).isEqualTo(id);
+        assertThat(read.getBody().path("signing_secret").asText()).isEqualTo(initialSecret);
+        assertThat(read.getBody().path("authentication").path("token").asText())
+                .isEqualTo("delivery-private-token");
+        assertThat(client.exchange(path.replace(owner.organizationId().toString(),
+                other.organizationId().toString()), HttpMethod.GET, new HttpEntity<>(headers),
+                JsonNode.class).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(readEndpoint(owner.key(), id).getBody().toString())
+                .doesNotContain(initialSecret, "delivery-private-token");
+    }
+
+    @Test
     void registersValidatedSimulatorEndpointAndSubscriptionsAtomically() throws Exception {
         Credentials credentials = credentials();
         ResponseEntity<JsonNode> created = register(credentials.key(), request(simulatorUrl()));
 
         assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         String endpointId = created.getBody().path("data").path("endpoint_id").asText();
+        String signingSecret = created.getBody().path("data").path("signing_secret").asText();
+        assertThat(signingSecret).hasSizeGreaterThan(32);
         assertThat(created.getBody().toString()).doesNotContain(credentials.key());
+        assertThat(readEndpoint(credentials.key(), endpointId).getBody().toString())
+                .doesNotContain(signingSecret, "signing_secret");
         assertThat(count("SELECT count(*) FROM endpoints WHERE id = ? AND organization_id = ?",
                 UUID.fromString(endpointId), credentials.organizationId())).isEqualTo(1);
         assertThat(count("SELECT count(*) FROM subscriptions WHERE endpoint_id = ? AND organization_id = ?",
                 UUID.fromString(endpointId), credentials.organizationId())).isEqualTo(2);
+        try (var connection = DriverManager.getConnection(
+                DATABASE.getJdbcUrl(), DATABASE.getUsername(), DATABASE.getPassword());
+                var statement = connection.prepareStatement("""
+                        SELECT signing_secret_ciphertext, signing_wrapped_dek, signing_key_version,
+                            signing_nonce, signing_secret_version FROM endpoints
+                        WHERE id = ? AND organization_id = ?
+                        """)) {
+            statement.setObject(1, UUID.fromString(endpointId));
+            statement.setObject(2, credentials.organizationId());
+            try (var row = statement.executeQuery()) {
+                assertThat(row.next()).isTrue();
+                EncryptedSecret encrypted = new EncryptedSecret(row.getBytes(1), row.getBytes(2),
+                        row.getString(3), row.getBytes(4));
+                assertThat(row.getLong(5)).isEqualTo(1);
+                assertThat(new String(secretCipher.decrypt(credentials.organizationId(),
+                        UUID.fromString(endpointId), "signing_secret", 1, encrypted),
+                        StandardCharsets.US_ASCII)).isEqualTo(signingSecret);
+            }
+        }
     }
 
     @Test

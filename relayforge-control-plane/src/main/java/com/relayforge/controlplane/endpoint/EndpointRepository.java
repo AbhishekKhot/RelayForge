@@ -10,7 +10,7 @@ public interface EndpointRepository {
     void insert(UUID id, UUID organizationId, String name, String baseUrl, String path,
             String queryJson, String headersJson, String metadataJson,
             int timeoutMs, int maxConcurrency, int maxAttempts, Instant createdAt,
-            String authType, EncryptedSecret authConfig);
+            String authType, EncryptedSecret authConfig, EncryptedSecret signingSecret);
 
     Optional<EndpointView> findForOrganization(UUID organizationId, UUID endpointId);
 

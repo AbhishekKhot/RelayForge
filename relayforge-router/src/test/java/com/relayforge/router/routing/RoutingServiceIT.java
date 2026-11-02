@@ -94,6 +94,8 @@ class RoutingServiceIT {
         assertThat(count("delivery_outbox", organization)).isEqualTo(2);
         assertThat(jdbc.queryForObject("SELECT status FROM routing_progress WHERE organization_id = ?",
                 String.class, organization)).isEqualTo("ROUTED");
+        assertThat(jdbc.queryForObject("SELECT event_locator FROM routing_progress WHERE organization_id = ?",
+                String.class, organization)).isEqualTo(accepted.eventLocator());
 
         jdbc.update("UPDATE endpoint_projection SET status = 'DISABLED' WHERE organization_id = ? AND endpoint_id = ?",
                 organization, second);
@@ -114,6 +116,25 @@ class RoutingServiceIT {
         assertThat(count("delivery_outbox", organization)).isZero();
         assertThat(jdbc.queryForObject("SELECT status FROM routing_progress WHERE organization_id = ?",
                 String.class, organization)).isEqualTo("NO_SUBSCRIBERS");
+    }
+
+    @Test
+    void fillsLocatorForExistingVerifiedRoutingProgress() {
+        UUID organization = UUID.randomUUID();
+        VerifiedEvent accepted = accepted(organization, UUID.randomUUID(), "legacy.type");
+        jdbc.update("INSERT INTO projection_state (organization_id, source_revision, ready) "
+                + "VALUES (?, 0, true)", organization);
+        jdbc.update("""
+                INSERT INTO routing_progress (accepted_day, event_id, organization_id,
+                    event_accepted_at, ingestion_shard_id, delivery_shard_id, status)
+                VALUES (?, ?, ?, ?, ?, ?, 'SELECTING')
+                """, accepted.acceptedDay(), accepted.eventId(), organization,
+                java.sql.Timestamp.from(accepted.acceptedAt()), accepted.ingestionShardId(),
+                accepted.deliveryShardId());
+        routing.route(accepted);
+        assertThat(jdbc.queryForObject("SELECT event_locator FROM routing_progress "
+                + "WHERE organization_id = ?", String.class, organization))
+                .isEqualTo(accepted.eventLocator());
     }
 
     private static UUID addSubscription(UUID organization, String eventType) {
@@ -145,7 +166,8 @@ class RoutingServiceIT {
     private static VerifiedEvent accepted(UUID organization, UUID event, String eventType) {
         LocalDate day = LocalDate.now(ZoneOffset.UTC);
         Instant acceptedAt = day.atStartOfDay().toInstant(ZoneOffset.UTC).plusSeconds(1);
-        return new VerifiedEvent(organization, event, day, acceptedAt, eventType, "ing-a", "dlv-a");
+        return new VerifiedEvent(organization, event, "evt_" + event.toString().replace("-", ""),
+                day, acceptedAt, eventType, "ing-a", "dlv-a");
     }
 
     private static int count(String table, UUID organization) {

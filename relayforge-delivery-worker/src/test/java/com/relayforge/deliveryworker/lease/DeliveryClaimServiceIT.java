@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.sql.Timestamp;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.UUID;
@@ -26,6 +27,7 @@ class DeliveryClaimServiceIT {
             .withPassword("relayforge-test");
     private static JdbcTemplate jdbc;
     private static DeliveryClaimService claims;
+    private static DeliveryAttemptService attempts;
 
     @BeforeAll
     static void startDatabase() {
@@ -37,6 +39,8 @@ class DeliveryClaimServiceIT {
                 DATABASE.getPassword());
         jdbc = new JdbcTemplate(dataSource);
         claims = new DeliveryClaimService(new JdbcDeliveryLeaseRepository(jdbc),
+                new TransactionTemplate(new JdbcTransactionManager(dataSource)));
+        attempts = new DeliveryAttemptService(jdbc,
                 new TransactionTemplate(new JdbcTransactionManager(dataSource)));
     }
 
@@ -111,6 +115,73 @@ class DeliveryClaimServiceIT {
         assertThat(claims.claim(third, "worker-three", 2, 1)).isEmpty();
     }
 
+    @Test
+    void reservesAttemptBeforeSendAndFinalizesSuccessfulDelivery() {
+        UUID delivery = due(UUID.randomUUID());
+        DeliveryClaimService.Lease lease = claims.claim(delivery, "worker-send", 2, 20).orElseThrow();
+        assertThat(attempts.eventLocator(lease)).startsWith("evt_");
+        DeliveryAttemptService.Attempt attempt = attempts.reserve(lease, 5);
+        assertThat(attempt.number()).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT attempt_count FROM deliveries WHERE id = ?",
+                Integer.class, delivery)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT outcome FROM delivery_attempts WHERE delivery_id = ?",
+                String.class, delivery)).isEqualTo("IN_PROGRESS");
+        assertThat(attempts.finish(lease, attempt, 204, null, null, null)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT status FROM deliveries WHERE id = ?",
+                String.class, delivery)).isEqualTo("SUCCEEDED");
+        assertThat(jdbc.queryForObject("SELECT http_status FROM delivery_attempts WHERE delivery_id = ?",
+                Integer.class, delivery)).isEqualTo(204);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_work WHERE delivery_id = ?",
+                Integer.class, delivery)).isZero();
+    }
+
+    @Test
+    void staleLeaseCannotFinalizeReservedAttempt() {
+        UUID delivery = due(UUID.randomUUID());
+        DeliveryClaimService.Lease lease = claims.claim(delivery, "worker-stale", 2, 20).orElseThrow();
+        DeliveryAttemptService.Attempt attempt = attempts.reserve(lease, 5);
+        jdbc.update("UPDATE delivery_work SET lease_expires_at = clock_timestamp() - interval '1 second' "
+                + "WHERE delivery_id = ?", delivery);
+        assertThat(attempts.finish(lease, attempt, 200, null, null, null)).isFalse();
+        assertThat(jdbc.queryForObject("SELECT outcome FROM delivery_attempts WHERE delivery_id = ?",
+                String.class, delivery)).isEqualTo("IN_PROGRESS");
+    }
+
+    @Test
+    void retryReservationSchedulesNewReadyMessage() {
+        UUID delivery = due(UUID.randomUUID());
+        DeliveryClaimService.Lease lease = claims.claim(delivery, "worker-retry", 2, 20).orElseThrow();
+        DeliveryAttemptService.Attempt attempt = attempts.reserve(lease, 5);
+        assertThat(attempts.finish(lease, attempt, 503, "HTTP_RETRYABLE", null,
+                Instant.now().plusSeconds(30))).isTrue();
+        assertThat(jdbc.queryForObject("SELECT status FROM deliveries WHERE id = ?",
+                String.class, delivery)).isEqualTo("RETRY_SCHEDULED");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_outbox WHERE delivery_id = ?",
+                Integer.class, delivery)).isEqualTo(1);
+    }
+
+    @Test
+    void unavailableConfigurationDefersUnclaimedWorkWithoutHttpAttempt() {
+        UUID delivery = due(UUID.randomUUID());
+        attempts.deferUnclaimed(delivery, Instant.now().plusSeconds(30));
+        assertThat(jdbc.queryForObject("SELECT attempt_count FROM deliveries WHERE id = ?",
+                Integer.class, delivery)).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_outbox WHERE delivery_id = ?",
+                Integer.class, delivery)).isEqualTo(1);
+        assertThat(claims.claim(delivery, "worker-early", 2, 20)).isEmpty();
+    }
+
+    @Test
+    void exhaustedAttemptLimitTerminatesWithoutSendingAgain() {
+        UUID delivery = due(UUID.randomUUID());
+        jdbc.update("UPDATE deliveries SET attempt_count = 3 WHERE id = ?", delivery);
+        attempts.finishExhausted(delivery, 3);
+        assertThat(jdbc.queryForObject("SELECT status FROM deliveries WHERE id = ?",
+                String.class, delivery)).isEqualTo("DEAD_LETTERED");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_work WHERE delivery_id = ?",
+                Integer.class, delivery)).isZero();
+    }
+
     private static UUID due(UUID endpoint) {
         UUID organization = UUID.randomUUID();
         UUID event = UUID.randomUUID();
@@ -118,9 +189,9 @@ class DeliveryClaimServiceIT {
         LocalDate day = LocalDate.now(ZoneOffset.UTC);
         jdbc.update("""
                 INSERT INTO routing_progress (accepted_day, event_id, organization_id,
-                    event_accepted_at, ingestion_shard_id, delivery_shard_id, status)
-                VALUES (?, ?, ?, ?, 'ing-a', 'dlv-a', 'ROUTED')
-                """, day, event, organization,
+                    event_locator, event_accepted_at, ingestion_shard_id, delivery_shard_id, status)
+                VALUES (?, ?, ?, ?, ?, 'ing-a', 'dlv-a', 'ROUTED')
+                """, day, event, organization, "evt_" + event.toString().replace("-", ""),
                 Timestamp.from(day.atStartOfDay().toInstant(ZoneOffset.UTC)));
         jdbc.update("""
                 INSERT INTO deliveries (accepted_day, id, organization_id, event_id, endpoint_id, status)

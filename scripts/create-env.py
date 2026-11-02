@@ -24,6 +24,8 @@ generated = {
         "EVENT_SUMMARY_CREDENTIAL",
         "ROUTER_EVENT_CREDENTIAL",
         "ROUTER_CONFIG_CREDENTIAL",
+        "DELIVERY_CONFIG_CREDENTIAL",
+        "DELIVERY_PAYLOAD_CREDENTIAL",
     )
 }
 generated["KAFKA_CLUSTER_ID"] = urlsafe_b64encode(uuid4().bytes).decode().rstrip("=")
