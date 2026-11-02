@@ -63,9 +63,15 @@ class RetryPolicyTest {
         assertThat(policy.decide(500, RetryPolicy.Failure.NONE, 10, 10,
                 NOW.minusSeconds(10), NOW.plusSeconds(7200), null).outcome())
                 .isEqualTo(RetryPolicy.Outcome.DEAD_LETTERED);
+        assertThat(policy.decide(500, RetryPolicy.Failure.NONE, 10, 10,
+                NOW.minusSeconds(10), NOW.plusSeconds(7200), null).errorCode())
+                .isEqualTo("MAX_ATTEMPTS");
         assertThat(policy.decide(500, RetryPolicy.Failure.NONE, 1, 10,
                 NOW.minus(Duration.ofHours(24)), NOW.plusSeconds(7200), null).outcome())
                 .isEqualTo(RetryPolicy.Outcome.DEAD_LETTERED);
+        assertThat(policy.decide(500, RetryPolicy.Failure.NONE, 1, 10,
+                NOW.minus(Duration.ofHours(24)), NOW.plusSeconds(7200), null).errorCode())
+                .isEqualTo("RETRY_HORIZON");
         assertThat(policy.decide(503, RetryPolicy.Failure.NONE, 1, 10,
                 NOW.minusSeconds(10), NOW.plusSeconds(30), "120").outcome())
                 .isEqualTo(RetryPolicy.Outcome.DEAD_LETTERED);

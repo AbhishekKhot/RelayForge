@@ -166,10 +166,8 @@ class DeliveryClaimServiceIT {
                 Timestamp.class, delivery).toInstant()).isEqualTo(retryAt);
         assertThat(jdbc.queryForObject("SELECT next_attempt_at FROM delivery_work WHERE delivery_id = ?",
                 Timestamp.class, delivery).toInstant()).isEqualTo(retryAt);
-        assertThat(jdbc.queryForObject("SELECT available_at FROM delivery_outbox WHERE delivery_id = ?",
-                Timestamp.class, delivery).toInstant()).isEqualTo(retryAt);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_outbox WHERE delivery_id = ?",
-                Integer.class, delivery)).isEqualTo(1);
+                Integer.class, delivery)).isZero();
     }
 
     @Test
@@ -184,9 +182,38 @@ class DeliveryClaimServiceIT {
         assertThat(claims.recoverExpired(10)).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT outcome FROM delivery_attempts WHERE id = ?",
                 String.class, unfinished.id())).isEqualTo("UNKNOWN");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_outbox WHERE delivery_id = ?",
+                Integer.class, delivery)).isZero();
         DeliveryClaimService.Lease renewed = claims.claim(delivery, "worker-recovered", 2, 20)
                 .orElseThrow();
-        assertThat(attempts.reserve(renewed, 5).number()).isEqualTo(2);
+        DeliveryAttemptService.Attempt next = attempts.reserve(renewed, 5);
+        assertThat(next.number()).isEqualTo(2);
+        assertThat(jdbc.queryForList("""
+                SELECT delivery_id FROM delivery_attempts WHERE delivery_id = ?
+                ORDER BY attempt_number
+                """, UUID.class, delivery)).containsExactly(delivery, delivery);
+    }
+
+    @Test
+    void expiredEventAfterCrashIsDeadLetteredWithoutAnotherSend() {
+        UUID delivery = due(UUID.randomUUID());
+        DeliveryClaimService.Lease lease = claims.claim(delivery, "worker-expired", 2, 20)
+                .orElseThrow();
+        DeliveryAttemptService.Attempt unfinished = attempts.reserve(lease, 5);
+        jdbc.update("UPDATE delivery_work SET event_expires_at = clock_timestamp() - interval '1 second', "
+                + "lease_expires_at = clock_timestamp() - interval '1 second' WHERE delivery_id = ?",
+                delivery);
+        jdbc.update("UPDATE deliveries SET lease_expires_at = clock_timestamp() - interval '1 second' "
+                + "WHERE id = ?", delivery);
+        assertThat(claims.recoverExpired(10)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT outcome FROM delivery_attempts WHERE id = ?",
+                String.class, unfinished.id())).isEqualTo("UNKNOWN");
+        assertThat(jdbc.queryForObject("SELECT status FROM deliveries WHERE id = ?",
+                String.class, delivery)).isEqualTo("DEAD_LETTERED");
+        assertThat(jdbc.queryForObject("SELECT last_error_code FROM deliveries WHERE id = ?",
+                String.class, delivery)).isEqualTo("EVENT_EXPIRED");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_work WHERE delivery_id = ?",
+                Integer.class, delivery)).isZero();
     }
 
     @Test
