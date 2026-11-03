@@ -311,6 +311,45 @@ public final class DeliveryAttemptService {
         }));
     }
 
+    public boolean recordRefreshChallenge(DeliveryClaimService.Lease lease, Attempt attempt,
+            String responseExcerpt) {
+        Objects.requireNonNull(lease);
+        Objects.requireNonNull(attempt);
+        if (responseExcerpt != null && (responseExcerpt.length() > 1000
+                || responseExcerpt.codePoints().anyMatch(value -> value < 0x20 || value > 0x7e))) {
+            throw new IllegalArgumentException("Invalid webhook response excerpt");
+        }
+        return Boolean.TRUE.equals(transactions.execute(status -> {
+            var owned = jdbc.query("""
+                    SELECT delivery.version FROM delivery_work work JOIN deliveries delivery
+                        ON delivery.accepted_day = work.accepted_day AND delivery.id = work.delivery_id
+                        AND delivery.organization_id = work.organization_id
+                    WHERE work.delivery_id = ? AND work.accepted_day = ?
+                        AND work.organization_id = ? AND work.status = 'IN_PROGRESS'
+                        AND work.lease_token = ? AND work.lease_owner = ?
+                        AND work.lease_expires_at > clock_timestamp()
+                        AND work.processing_deadline_at > clock_timestamp()
+                        AND delivery.status = 'IN_PROGRESS' AND delivery.lease_token = ?
+                        AND delivery.version = ?
+                    FOR UPDATE OF work, delivery
+                    """, (row, index) -> row.getLong(1), lease.deliveryId(), lease.acceptedDay(),
+                    lease.organizationId(), lease.token(), lease.workerId(), lease.token(), lease.version());
+            if (owned.isEmpty()) {
+                return false;
+            }
+            return jdbc.update("""
+                    UPDATE delivery_attempts SET finished_at = clock_timestamp(),
+                        outcome = 'AUTH_CHALLENGE', http_status = 401,
+                        duration_ms = LEAST(2147483647,
+                            GREATEST(0, EXTRACT(EPOCH FROM (clock_timestamp() - started_at)) * 1000)::bigint),
+                        error_code = 'AUTH_REFRESH', response_excerpt = ?
+                    WHERE accepted_day = ? AND id = ? AND organization_id = ?
+                        AND delivery_id = ? AND outcome = 'IN_PROGRESS'
+                    """, responseExcerpt, lease.acceptedDay(), attempt.id(),
+                    lease.organizationId(), lease.deliveryId()) == 1;
+        }));
+    }
+
     public boolean finish(DeliveryClaimService.Lease lease, Attempt attempt, int httpStatus,
             String errorCode, String responseExcerpt, Instant nextAttemptAt) {
         Objects.requireNonNull(lease);

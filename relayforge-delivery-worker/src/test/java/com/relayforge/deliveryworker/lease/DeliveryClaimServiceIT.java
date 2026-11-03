@@ -99,6 +99,23 @@ class DeliveryClaimServiceIT {
     }
 
     @Test
+    void reservesSecondWebhookAttemptAfterAuthenticationChallenge() {
+        UUID delivery = due(UUID.randomUUID());
+        DeliveryClaimService.Lease lease = claims.claim(delivery, "worker-refresh", 2, 20).orElseThrow();
+        DeliveryAttemptService.Attempt first = attempts.reserve(lease, 3);
+        assertThat(first.number()).isEqualTo(1);
+        assertThat(attempts.recordRefreshChallenge(lease, first, "expired token")).isTrue();
+        DeliveryAttemptService.Attempt second = attempts.reserve(lease, 3);
+        assertThat(second.number()).isEqualTo(2);
+        assertThat(attempts.finish(lease, second, 204, null, null, null)).isTrue();
+        assertThat(jdbc.queryForList("SELECT attempt_number || ':' || outcome || ':' || http_status "
+                + "FROM delivery_attempts WHERE delivery_id = ? ORDER BY attempt_number",
+                String.class, delivery)).containsExactly("1:AUTH_CHALLENGE:401", "2:SUCCEEDED:204");
+        assertThat(jdbc.queryForObject("SELECT attempt_count FROM deliveries WHERE id = ?",
+                Integer.class, delivery)).isEqualTo(2);
+    }
+
+    @Test
     void expiryRecoveryFencesOldTokenAndAllowsNewOwner() {
         UUID delivery = due(UUID.randomUUID());
         DeliveryClaimService.Lease old = claims.claim(delivery, "worker-old", 2, 20).orElseThrow();

@@ -170,10 +170,13 @@ def main():
     refresh = {**retry, "token_url": simulator_url + "/g1-refresh-token"}
     refresh_id, refresh_status, refresh_attempts = delivery(control, ingestion, bearer,
             organization, simulator_url, "refresh", refresh)
-    assert (refresh_status, refresh_attempts) == ("SUCCEEDED", "1")
+    assert (refresh_status, refresh_attempts) == ("SUCCEEDED", "2")
     assert query("SELECT count(*) FROM authentication_attempts WHERE delivery_id = '%s' "
                  "AND outcome = 'SUCCEEDED';" % refresh_id) == "2"
-    print("G1 webhook 401 refreshes once within one delivery attempt")
+    assert query("SELECT string_agg(attempt_number || ':' || outcome || ':' || http_status, ',' "
+                 "ORDER BY attempt_number) FROM delivery_attempts WHERE delivery_id = '%s';" %
+                 refresh_id) == "1:AUTH_CHALLENGE:401,2:SUCCEEDED:204"
+    print("G1 webhook 401 refreshes once with separate outbound attempt history")
 
     mapping(simulator, "/g1-malformed-token", {"status": 200,
             "headers": {"Content-Type": "application/json"}, "jsonBody": {"unexpected": "value"}})

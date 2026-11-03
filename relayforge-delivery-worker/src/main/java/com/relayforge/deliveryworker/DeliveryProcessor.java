@@ -202,10 +202,16 @@ public final class DeliveryProcessor implements AutoCloseable {
                 httpStatus = response.status();
                 excerpt = redact(response.excerpt(), endpoint, request);
                 retryAfter = response.retryAfter();
-                if (httpStatus == 401 && authentication.dynamic(endpoint.path("authentication"))
-                        && !lost.get()) {
+                if (httpStatus == 401 && attempt.number() < maxAttempts
+                        && authentication.dynamic(endpoint.path("authentication")) && !lost.get()) {
                     AuthMaterial refreshed = authentication.resolve(endpoint.path("authentication"),
                             active.get(), () -> !lost.get());
+                    synchronized (active) {
+                        if (lost.get() || !attempts.recordRefreshChallenge(active.get(), attempt, excerpt)) {
+                            return;
+                        }
+                        attempt = attempts.reserve(active.get(), maxAttempts);
+                    }
                     request = requests.build(lease.deliveryId(), locator,
                             required(payload, "event_type"), attempt.number(), payload.path("payload"),
                             refreshed, required(endpoint, "signing_secret"), clock.instant());
@@ -218,7 +224,6 @@ public final class DeliveryProcessor implements AutoCloseable {
             } catch (TokenExchangeService.TokenFailure unavailable) {
                 failure = unavailable.retryable() ? RetryPolicy.Failure.NETWORK
                         : RetryPolicy.Failure.SECURITY;
-                httpStatus = 0;
             } catch (IOException unavailable) {
                 failure = failureFor(unavailable);
             } catch (RuntimeException rejected) {
