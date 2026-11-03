@@ -66,7 +66,9 @@ def main():
     assert first_series["data"]["points"][0]["bucket"] == "2026-11-03T10:00:00Z"
     status, other_endpoint = get(analytics, series.replace(endpoint, str(uuid4())), first_key)
     assert status == 200 and other_endpoint["data"]["points"] == []
-    status, invalid = get(analytics, overview.replace("2026-11-03", "2026-09-01"), first_key)
+    oversized = urlencode({"from": "2026-09-01T10:00:00Z",
+                           "to": "2026-11-03T11:00:00Z"})
+    status, invalid = get(analytics, "/v1/analytics/overview?" + oversized, first_key)
     assert status == 400, invalid
     status, invalid = get(analytics, series.replace("interval=hour", "interval=minute"), first_key)
     assert status == 400, invalid
