@@ -6,7 +6,7 @@ import subprocess
 import time
 from uuid import uuid4
 
-from verify_e2 import post, query, settings
+from verify_support import post, query, settings
 
 
 def mapping(simulator, path, response, *, scenario=None, required=None, next_state=None,
