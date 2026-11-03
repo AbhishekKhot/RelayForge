@@ -143,6 +143,7 @@ def verify():
     assert count("ingestion_outbox", organization_id) == 2
     verify_routing(env, control, ingestion)
     run(["python3", "scripts/verify-e2.py"])
+    run(["python3", "scripts/verify-g1.py"])
     print("C1 HA event acceptance, idempotency, and standby-loss checks passed")
 
 

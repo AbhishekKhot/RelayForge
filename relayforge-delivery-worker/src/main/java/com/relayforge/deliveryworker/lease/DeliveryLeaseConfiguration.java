@@ -5,6 +5,10 @@ import com.zaxxer.hikari.HikariDataSource;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.relayforge.deliveryworker.DeliveryKafkaLifecycle;
 import com.relayforge.deliveryworker.DeliveryProcessor;
+import com.relayforge.deliveryworker.auth.AuthenticationStrategyResolver;
+import com.relayforge.deliveryworker.auth.StaticAuthenticationStrategy;
+import com.relayforge.deliveryworker.auth.TokenAuthenticationStrategy;
+import com.relayforge.deliveryworker.auth.TokenExchangeService;
 import com.relayforge.deliveryworker.http.DeliveryReferenceClient;
 import com.relayforge.deliveryworker.http.WebhookRequestFactory;
 import com.relayforge.deliveryworker.retry.RetryPolicy;
@@ -121,11 +125,25 @@ public class DeliveryLeaseConfiguration {
     }
 
     @Bean
+    TokenExchangeService deliveryTokenExchangeService(SafeWebhookClient client,
+            DestinationPolicy policy, ObjectMapper json, DeliveryAttemptService attempts) {
+        return new TokenExchangeService(client, policy, json, attempts, Clock.systemUTC(),
+                () -> ThreadLocalRandom.current().nextDouble(), duration -> Thread.sleep(duration));
+    }
+
+    @Bean
+    AuthenticationStrategyResolver deliveryAuthenticationStrategies(TokenExchangeService tokens) {
+        return new AuthenticationStrategyResolver(new StaticAuthenticationStrategy(),
+                new TokenAuthenticationStrategy(tokens));
+    }
+
+    @Bean
     DeliveryProcessor deliveryProcessor(DeliveryClaimService claims, DeliveryAttemptService attempts,
             DeliveryReferenceClient references, DestinationPolicy policy,
-            SafeWebhookClient client, RetryPolicy retryPolicy, ObjectMapper json) {
+            SafeWebhookClient client, RetryPolicy retryPolicy, ObjectMapper json,
+            AuthenticationStrategyResolver authentication) {
         return new DeliveryProcessor(claims, attempts, references, new WebhookRequestFactory(json),
-                policy, client, retryPolicy, Clock.systemUTC(),
+                policy, client, retryPolicy, authentication, Clock.systemUTC(),
                 "worker-" + java.util.UUID.randomUUID());
     }
 

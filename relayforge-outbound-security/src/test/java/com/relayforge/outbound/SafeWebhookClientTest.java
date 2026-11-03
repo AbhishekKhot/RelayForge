@@ -16,6 +16,64 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class SafeWebhookClientTest {
     @Test
+    void tokenTransportBoundsResponseAndNeverFollowsRedirect() throws Exception {
+        AtomicInteger redirected = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/token", exchange -> {
+            assertThat(exchange.getRequestHeaders().getFirst("Content-Type"))
+                    .startsWith("application/x-www-form-urlencoded");
+            assertThat(exchange.getRequestHeaders().getFirst("Authorization"))
+                    .isEqualTo("Basic Y2xpZW50OnNlY3JldA==");
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            byte[] body = "{\"access_token\":\"secret\"}".getBytes();
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.createContext("/redirect", exchange -> {
+            exchange.getResponseHeaders().set("Location", "/target");
+            exchange.sendResponseHeaders(302, -1);
+            exchange.close();
+        });
+        server.createContext("/target", exchange -> {
+            redirected.incrementAndGet();
+            exchange.sendResponseHeaders(200, -1);
+            exchange.close();
+        });
+        server.createContext("/large-token", exchange -> {
+            byte[] body = "x".repeat(20000).getBytes();
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            URI simulator = URI.create("http://localhost:" + server.getAddress().getPort());
+            DestinationPolicy policy = new DestinationPolicy(host -> new InetAddress[]{
+                    InetAddress.getByName("127.0.0.1")}, true, simulator);
+            try (SafeWebhookClient client = new SafeWebhookClient(policy)) {
+                SafeWebhookClient.TokenResult result = client.sendToken(policy.validate(new Destination(
+                        simulator.toString(), "/token", Map.of(), Map.of())),
+                        "grant_type=client_credentials".getBytes(),
+                        "application/x-www-form-urlencoded", "Basic Y2xpZW50OnNlY3JldA==",
+                        Duration.ofSeconds(2), () -> true);
+                assertThat(result.status()).isEqualTo(200);
+                assertThat(result.toString()).doesNotContain("secret");
+                assertThat(client.sendToken(policy.validate(new Destination(simulator.toString(),
+                        "/redirect", Map.of(), Map.of())), new byte[0],
+                        "application/json", Duration.ofSeconds(2), () -> true).status()).isEqualTo(302);
+                assertThatThrownBy(() -> client.sendToken(policy.validate(new Destination(
+                        simulator.toString(), "/large-token", Map.of(), Map.of())), new byte[0],
+                        "application/json", Duration.ofSeconds(2), () -> true))
+                        .isInstanceOf(java.io.IOException.class);
+            }
+            assertThat(redirected).hasValue(0);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void boundsResponseExcerptAndOverallDeadline() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/large", exchange -> {

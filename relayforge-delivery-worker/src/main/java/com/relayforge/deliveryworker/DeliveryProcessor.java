@@ -3,6 +3,10 @@ package com.relayforge.deliveryworker;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.relayforge.deliveryworker.http.DeliveryReferenceClient;
 import com.relayforge.deliveryworker.http.WebhookRequestFactory;
+import com.relayforge.deliveryworker.auth.AuthMaterial;
+import com.relayforge.deliveryworker.auth.AuthenticationStrategyResolver;
+import com.relayforge.deliveryworker.auth.StaticAuthenticationStrategy;
+import com.relayforge.deliveryworker.auth.TokenExchangeService;
 import com.relayforge.deliveryworker.lease.DeliveryAttemptService;
 import com.relayforge.deliveryworker.lease.DeliveryClaimService;
 import com.relayforge.deliveryworker.retry.RetryPolicy;
@@ -33,6 +37,7 @@ public final class DeliveryProcessor implements AutoCloseable {
     private final DestinationPolicy policy;
     private final SafeWebhookClient client;
     private final RetryPolicy retryPolicy;
+    private final AuthenticationStrategyResolver authentication;
     private final Clock clock;
     private final String workerId;
     private final java.util.concurrent.ScheduledExecutorService renewals =
@@ -42,6 +47,17 @@ public final class DeliveryProcessor implements AutoCloseable {
             DeliveryReferenceClient references, WebhookRequestFactory requests,
             DestinationPolicy policy, SafeWebhookClient client, RetryPolicy retryPolicy,
             Clock clock, String workerId) {
+        this(claims, attempts, references, requests, policy, client, retryPolicy,
+                new AuthenticationStrategyResolver(new StaticAuthenticationStrategy(),
+                        (configuration, lease, leaseValid) -> {
+                            throw new IllegalStateException("Token strategy is unavailable");
+                        }), clock, workerId);
+    }
+
+    public DeliveryProcessor(DeliveryClaimService claims, DeliveryAttemptService attempts,
+            DeliveryReferenceClient references, WebhookRequestFactory requests,
+            DestinationPolicy policy, SafeWebhookClient client, RetryPolicy retryPolicy,
+            AuthenticationStrategyResolver authentication, Clock clock, String workerId) {
         this.claims = Objects.requireNonNull(claims);
         this.attempts = Objects.requireNonNull(attempts);
         this.references = Objects.requireNonNull(references);
@@ -49,6 +65,7 @@ public final class DeliveryProcessor implements AutoCloseable {
         this.policy = Objects.requireNonNull(policy);
         this.client = Objects.requireNonNull(client);
         this.retryPolicy = Objects.requireNonNull(retryPolicy);
+        this.authentication = Objects.requireNonNull(authentication);
         this.clock = Objects.requireNonNull(clock);
         this.workerId = Objects.requireNonNull(workerId);
     }
@@ -126,9 +143,37 @@ public final class DeliveryProcessor implements AutoCloseable {
                 if (timeoutMillis < 100 || timeoutMillis > 60000) {
                     throw new IllegalStateException("Invalid delivery configuration");
                 }
+                AuthMaterial preview = authentication.dynamic(endpoint.path("authentication"))
+                        ? new AuthMaterial(Map.of())
+                        : authentication.resolve(endpoint.path("authentication"), active.get(),
+                                () -> !lost.get());
                 requests.build(lease.deliveryId(), locator, required(payload, "event_type"),
-                        1, payload.path("payload"), endpoint.path("authentication"),
+                        1, payload.path("payload"), preview,
                         required(endpoint, "signing_secret"), clock.instant());
+            } catch (RuntimeException invalid) {
+                synchronized (active) {
+                    if (!lost.get()) {
+                        attempts.rejectClaimed(active.get(), "CONFIGURATION_INVALID");
+                    }
+                }
+                return;
+            }
+            AuthMaterial material;
+            try {
+                material = authentication.resolve(endpoint.path("authentication"), active.get(),
+                        () -> !lost.get());
+            } catch (TokenExchangeService.TokenFailure failure) {
+                synchronized (active) {
+                    if (!lost.get()) {
+                        if (failure.retryable()) {
+                            attempts.deferClaimed(active.get(), clock.instant().plusSeconds(30),
+                                    failure.code());
+                        } else {
+                            attempts.rejectClaimed(active.get(), failure.code());
+                        }
+                    }
+                }
+                return;
             } catch (RuntimeException invalid) {
                 synchronized (active) {
                     if (!lost.get()) {
@@ -146,7 +191,7 @@ public final class DeliveryProcessor implements AutoCloseable {
             }
             WebhookRequestFactory.Request request = requests.build(lease.deliveryId(), locator,
                     required(payload, "event_type"), attempt.number(), payload.path("payload"),
-                    endpoint.path("authentication"), required(endpoint, "signing_secret"), clock.instant());
+                    material, required(endpoint, "signing_secret"), clock.instant());
             int httpStatus = 0;
             String excerpt = null;
             String retryAfter = null;
@@ -157,6 +202,23 @@ public final class DeliveryProcessor implements AutoCloseable {
                 httpStatus = response.status();
                 excerpt = redact(response.excerpt(), endpoint, request);
                 retryAfter = response.retryAfter();
+                if (httpStatus == 401 && authentication.dynamic(endpoint.path("authentication"))
+                        && !lost.get()) {
+                    AuthMaterial refreshed = authentication.resolve(endpoint.path("authentication"),
+                            active.get(), () -> !lost.get());
+                    request = requests.build(lease.deliveryId(), locator,
+                            required(payload, "event_type"), attempt.number(), payload.path("payload"),
+                            refreshed, required(endpoint, "signing_secret"), clock.instant());
+                    response = client.send(destination, request.body(), Duration.ofMillis(timeoutMillis),
+                            request.headers(), () -> !lost.get());
+                    httpStatus = response.status();
+                    excerpt = redact(response.excerpt(), endpoint, request);
+                    retryAfter = response.retryAfter();
+                }
+            } catch (TokenExchangeService.TokenFailure unavailable) {
+                failure = unavailable.retryable() ? RetryPolicy.Failure.NETWORK
+                        : RetryPolicy.Failure.SECURITY;
+                httpStatus = 0;
             } catch (IOException unavailable) {
                 failure = failureFor(unavailable);
             } catch (RuntimeException rejected) {
