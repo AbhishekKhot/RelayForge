@@ -197,7 +197,8 @@ class EventIngestionIT {
                 .isEqualTo(first.getBody().path("data").path("event_id"));
         assertThat(conflict.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
         assertThat(count("SELECT count(*) FROM events WHERE organization_id = ?", ORGANIZATION)).isEqualTo(1);
-        assertThat(count("SELECT count(*) FROM ingestion_outbox WHERE organization_id = ?", ORGANIZATION)).isEqualTo(1);
+        assertThat(count("SELECT count(*) FROM ingestion_outbox WHERE organization_id = ? "
+                + "AND message_type = 'event.accepted.v1'", ORGANIZATION)).isEqualTo(1);
     }
 
     @Test

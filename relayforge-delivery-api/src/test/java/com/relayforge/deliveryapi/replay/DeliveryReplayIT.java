@@ -69,7 +69,8 @@ class DeliveryReplayIT {
         assertThat(jdbc.queryForObject("SELECT status FROM deliveries WHERE id = ?", String.class,
                 source.delivery())).isEqualTo("DEAD_LETTERED");
         assertThat(jdbc.queryForObject("SELECT payload ->> 'delivery_id' FROM delivery_outbox "
-                + "WHERE delivery_id = ?", String.class, first.replayDeliveryId()))
+                + "WHERE delivery_id = ? AND message_type = 'delivery.ready.v1'",
+                String.class, first.replayDeliveryId()))
                 .isEqualTo(first.replayDeliveryId().toString());
     }
 
@@ -141,7 +142,10 @@ class DeliveryReplayIT {
     }
 
     private static int count(String table, String column, UUID delivery) {
-        return jdbc.queryForObject("SELECT count(*) FROM " + table + " WHERE " + column + " = ?",
+        String filter = table.equals("delivery_outbox")
+                ? " AND message_type = 'delivery.ready.v1'" : "";
+        return jdbc.queryForObject("SELECT count(*) FROM " + table + " WHERE " + column + " = ?"
+                + filter,
                 Integer.class, delivery);
     }
 
