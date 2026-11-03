@@ -7,6 +7,7 @@ import com.relayforge.deliveryworker.auth.AuthMaterial;
 import com.relayforge.deliveryworker.auth.AuthenticationStrategyResolver;
 import com.relayforge.deliveryworker.auth.StaticAuthenticationStrategy;
 import com.relayforge.deliveryworker.auth.TokenExchangeService;
+import com.relayforge.deliveryworker.auth.TokenCacheKey;
 import com.relayforge.deliveryworker.lease.DeliveryAttemptService;
 import com.relayforge.deliveryworker.lease.DeliveryClaimService;
 import com.relayforge.deliveryworker.retry.RetryPolicy;
@@ -131,9 +132,16 @@ public final class DeliveryProcessor implements AutoCloseable {
                 return;
             }
             JsonNode payload = references.payload(lease.organizationId(), locator);
+            JsonNode authConfig = endpoint.path("authentication");
+            TokenCacheKey cacheKey = null;
             ValidatedDestination destination;
             int timeoutMillis;
             try {
+                if (authentication.dynamic(authConfig)) {
+                    cacheKey = new TokenCacheKey(lease.organizationId(), lease.endpointId(),
+                            endpoint.path("auth_config_version").asLong(-1),
+                            endpoint.path("credential_version").asLong(-1));
+                }
                 verify(endpoint, payload, lease, locator);
                 destination = policy.validate(new Destination(
                         required(endpoint, "base_url"), required(endpoint, "path"),
@@ -160,8 +168,8 @@ public final class DeliveryProcessor implements AutoCloseable {
             }
             AuthMaterial material;
             try {
-                material = authentication.resolve(endpoint.path("authentication"), active.get(),
-                        () -> !lost.get());
+                material = authentication.resolve(authConfig, active.get(),
+                        () -> !lost.get(), cacheKey);
             } catch (TokenExchangeService.TokenFailure failure) {
                 synchronized (active) {
                     if (!lost.get()) {
@@ -204,8 +212,8 @@ public final class DeliveryProcessor implements AutoCloseable {
                 retryAfter = response.retryAfter();
                 if (httpStatus == 401 && attempt.number() < maxAttempts
                         && authentication.dynamic(endpoint.path("authentication")) && !lost.get()) {
-                    AuthMaterial refreshed = authentication.resolve(endpoint.path("authentication"),
-                            active.get(), () -> !lost.get());
+                    AuthMaterial refreshed = authentication.refresh(authConfig,
+                            active.get(), () -> !lost.get(), cacheKey, material);
                     synchronized (active) {
                         if (lost.get() || !attempts.recordRefreshChallenge(active.get(), attempt, excerpt)) {
                             return;

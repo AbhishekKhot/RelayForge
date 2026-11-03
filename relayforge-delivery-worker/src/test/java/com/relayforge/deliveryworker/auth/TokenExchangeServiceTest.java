@@ -53,8 +53,9 @@ class TokenExchangeServiceTest {
                  "token_response":{"access_token_path":"$.data.accessToken",
                  "expires_in_path":"$.data.expiresIn","token_type":"Bearer"}}
                 """);
-        assertThat(service.acquire(configuration, lease, () -> true).headers())
-                .containsEntry("Authorization", "Bearer safe-token");
+        var acquired = service.acquireToken(configuration, lease, () -> true);
+        assertThat(acquired.material().headers()).containsEntry("Authorization", "Bearer safe-token");
+        assertThat(acquired.expiresAt()).isEqualTo(NOW.plusSeconds(120));
         verify(client).sendToken(any(), org.mockito.ArgumentMatchers.argThat(body ->
                 new String(body, StandardCharsets.UTF_8).contains("grant_type=client_credentials")
                 && !new String(body, StandardCharsets.UTF_8).contains("client_secret=secret")),

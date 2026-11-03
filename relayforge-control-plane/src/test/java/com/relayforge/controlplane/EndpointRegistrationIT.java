@@ -391,6 +391,8 @@ class EndpointRegistrationIT {
                 .contains("first-token");
         assertThat(count("SELECT auth_config_version FROM endpoints WHERE id = ?", UUID.fromString(id)))
                 .isEqualTo(1);
+        assertThat(count("SELECT auth_credential_version FROM endpoints WHERE id = ?", UUID.fromString(id)))
+                .isEqualTo(1);
 
         headers.set("If-Match", "\"2\"");
         ResponseEntity<JsonNode> replaced = client.exchange("/v1/endpoints/" + id, HttpMethod.PATCH,
@@ -401,6 +403,8 @@ class EndpointRegistrationIT {
                 .contains("second-token").doesNotContain("first-token");
         assertThat(count("SELECT auth_config_version FROM endpoints WHERE id = ?", UUID.fromString(id)))
                 .isEqualTo(3);
+        assertThat(count("SELECT auth_credential_version FROM endpoints WHERE id = ?", UUID.fromString(id)))
+                .isEqualTo(2);
 
         headers.set("If-Match", "\"3\"");
         ResponseEntity<JsonNode> rotated = client.exchange("/v1/endpoints/" + id + "/rotate-secret",

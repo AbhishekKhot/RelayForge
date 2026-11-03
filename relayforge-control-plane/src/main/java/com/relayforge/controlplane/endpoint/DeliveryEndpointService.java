@@ -53,6 +53,7 @@ public final class DeliveryEndpointService {
                 throw new IllegalStateException("Endpoint configuration is invalid");
             }
             Configuration configuration = new Configuration(organizationId, endpointId, stored.version(),
+                    stored.authVersion(), stored.credentialVersion(),
                     stored.baseUrl(), stored.path(), query, headers, stored.timeoutMs(),
                     stored.maxAttempts(), stored.maxConcurrency(), authentication, signing);
             if (json.writeValueAsBytes(configuration).length > 65536) {
@@ -79,6 +80,8 @@ public final class DeliveryEndpointService {
 
     public record Configuration(@JsonProperty("organization_id") UUID organizationId,
             @JsonProperty("endpoint_id") UUID endpointId, long version,
+            @JsonProperty("auth_config_version") Long authConfigVersion,
+            @JsonProperty("credential_version") long credentialVersion,
             @JsonProperty("base_url") String baseUrl, String path,
             @JsonProperty("query_params") JsonNode queryParams, JsonNode headers,
             @JsonProperty("timeout_ms") int timeoutMs,

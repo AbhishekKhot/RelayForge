@@ -101,7 +101,7 @@ class OwnerMigrationsIT {
                 .locations("filesystem:../relayforge-" + (owner.equals("delivery") ? "delivery-api" : owner) + "/src/main/resources/db/migration")
                 .load();
         int expected = switch (owner) {
-            case "control-plane" -> 4;
+            case "control-plane" -> 5;
             case "ingestion" -> 2;
             case "delivery" -> 4;
             default -> 1;

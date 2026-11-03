@@ -9,6 +9,8 @@ import com.relayforge.deliveryworker.auth.AuthenticationStrategyResolver;
 import com.relayforge.deliveryworker.auth.StaticAuthenticationStrategy;
 import com.relayforge.deliveryworker.auth.TokenAuthenticationStrategy;
 import com.relayforge.deliveryworker.auth.TokenExchangeService;
+import com.relayforge.deliveryworker.auth.TokenCacheService;
+import com.relayforge.deliveryworker.auth.RedisTokenCacheStore;
 import com.relayforge.deliveryworker.http.DeliveryReferenceClient;
 import com.relayforge.deliveryworker.http.WebhookRequestFactory;
 import com.relayforge.deliveryworker.retry.RetryPolicy;
@@ -28,6 +30,12 @@ import org.springframework.core.env.Profiles;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.JdbcTransactionManager;
 import org.springframework.scheduling.annotation.EnableScheduling;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import io.lettuce.core.ClientOptions;
+import io.lettuce.core.SocketOptions;
+import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
 import org.springframework.transaction.support.TransactionTemplate;
 
 @Configuration(proxyBeanMethods = false)
@@ -132,9 +140,43 @@ public class DeliveryLeaseConfiguration {
     }
 
     @Bean
-    AuthenticationStrategyResolver deliveryAuthenticationStrategies(TokenExchangeService tokens) {
+    LettuceConnectionFactory deliveryTokenRedisConnectionFactory(Environment environment) {
+        URI uri = URI.create(environment.getRequiredProperty("relayforge.redis.uri"));
+        if (!("redis".equals(uri.getScheme()) || "rediss".equals(uri.getScheme()))
+                || uri.getHost() == null || uri.getPort() < 1 || uri.getRawUserInfo() != null
+                || uri.getRawQuery() != null || uri.getRawFragment() != null
+                || uri.getRawPath() != null && !uri.getRawPath().isEmpty()) {
+            throw new IllegalArgumentException("Invalid Redis connection URL");
+        }
+        RedisStandaloneConfiguration server = new RedisStandaloneConfiguration(uri.getHost(), uri.getPort());
+        server.setPassword(environment.getRequiredProperty("relayforge.redis.password"));
+        var options = ClientOptions.builder().socketOptions(SocketOptions.builder()
+                .connectTimeout(Duration.ofMillis(300)).build()).build();
+        var builder = LettuceClientConfiguration.builder().clientOptions(options)
+                .commandTimeout(Duration.ofMillis(300));
+        if ("rediss".equals(uri.getScheme())) {
+            builder.useSsl();
+        }
+        return new LettuceConnectionFactory(server, builder.build());
+    }
+
+    @Bean
+    StringRedisTemplate deliveryTokenRedisTemplate(LettuceConnectionFactory factory) {
+        return new StringRedisTemplate(factory);
+    }
+
+    @Bean
+    TokenCacheService deliveryTokenCacheService(TokenExchangeService exchange,
+            StringRedisTemplate redis, ObjectMapper json) {
+        return new TokenCacheService(exchange, new RedisTokenCacheStore(redis, json), Clock.systemUTC(),
+                () -> ThreadLocalRandom.current().nextDouble(), java.util.UUID::randomUUID,
+                duration -> Thread.sleep(duration));
+    }
+
+    @Bean
+    AuthenticationStrategyResolver deliveryAuthenticationStrategies(TokenCacheService cache) {
         return new AuthenticationStrategyResolver(new StaticAuthenticationStrategy(),
-                new TokenAuthenticationStrategy(tokens));
+                new TokenAuthenticationStrategy(cache));
     }
 
     @Bean
