@@ -23,6 +23,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 @ConditionalOnProperty(name = "relayforge.database.username")
 public final class ControlPlaneAuthFilter extends OncePerRequestFilter {
     public static final String ORGANIZATION_ATTRIBUTE = ControlPlaneAuthFilter.class.getName() + ".organizationId";
+    public static final String KEY_ATTRIBUTE = ControlPlaneAuthFilter.class.getName() + ".keyId";
 
     private final OrganizationService organizations;
     private final ObjectMapper json;
@@ -78,6 +79,7 @@ public final class ControlPlaneAuthFilter extends OncePerRequestFilter {
             return;
         }
         request.setAttribute(ORGANIZATION_ATTRIBUTE, result.organizationId());
+        request.setAttribute(KEY_ATTRIBUTE, result.keyId());
         chain.doFilter(request, response);
     }
 
@@ -94,7 +96,8 @@ public final class ControlPlaneAuthFilter extends OncePerRequestFilter {
             if (requested == null || requested.equals("events:write")) {
                 return "events:write";
             }
-            if (requested.equals("events:read") || requested.equals("deliveries:read")) {
+            if (requested.equals("events:read") || requested.equals("deliveries:read")
+                    || requested.equals("deliveries:replay")) {
                 return requested;
             }
             return null;

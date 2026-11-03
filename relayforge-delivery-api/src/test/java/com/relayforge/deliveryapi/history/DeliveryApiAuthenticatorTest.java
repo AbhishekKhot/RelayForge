@@ -18,13 +18,14 @@ class DeliveryApiAuthenticatorTest {
     @Test
     void validatesDeliveryReadScopeAndReturnsOrganization() throws Exception {
         UUID organization = UUID.randomUUID();
+        UUID keyId = UUID.randomUUID();
         AtomicReference<String> scope = new AtomicReference<>();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v1/auth/check", exchange -> {
             scope.set(exchange.getRequestURI().getRawQuery());
             int status = "Bearer permitted".equals(exchange.getRequestHeaders().getFirst("Authorization"))
                     ? 200 : 403;
-            byte[] body = ("{\"organization_id\":\"" + organization + "\"}")
+            byte[] body = ("{\"organization_id\":\"" + organization + "\",\"key_id\":\"" + keyId + "\"}")
                     .getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
             exchange.sendResponseHeaders(status, body.length);
@@ -37,6 +38,9 @@ class DeliveryApiAuthenticatorTest {
                     "http://127.0.0.1:" + server.getAddress().getPort()), new ObjectMapper());
             assertThat(auth.authenticate("Bearer permitted")).isEqualTo(organization);
             assertThat(scope).hasValue("scope=deliveries:read");
+            assertThat(auth.authenticateReplay("Bearer permitted"))
+                    .isEqualTo(new DeliveryApiAuthenticator.AuthorizedKey(organization, keyId));
+            assertThat(scope).hasValue("scope=deliveries:replay");
             assertThatThrownBy(() -> auth.authenticate("Bearer denied"))
                     .isInstanceOfSatisfying(ResponseStatusException.class, failure ->
                             assertThat(failure.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN));
