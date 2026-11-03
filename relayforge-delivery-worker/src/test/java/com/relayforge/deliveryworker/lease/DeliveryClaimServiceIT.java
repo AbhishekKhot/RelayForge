@@ -74,6 +74,48 @@ class DeliveryClaimServiceIT {
     }
 
     @Test
+    void recordsTokenAttemptsSeparatelyAndDefersWithoutWebhookAttempt() {
+        UUID delivery = due(UUID.randomUUID());
+        DeliveryClaimService.Lease lease = claims.claim(delivery, "worker-auth", 2, 20).orElseThrow();
+        Instant started = Instant.now().minusMillis(20);
+        assertThat(attempts.recordAuthentication(lease, "RETRYABLE_FAILURE", 500,
+                "AUTH_HTTP_RETRYABLE", started)).isTrue();
+        assertThat(attempts.recordAuthentication(lease, "SUCCEEDED", 200,
+                null, started)).isTrue();
+        assertThat(jdbc.queryForList("SELECT outcome FROM authentication_attempts WHERE delivery_id = ? "
+                + "ORDER BY attempt_number", String.class, delivery))
+                .containsExactly("RETRYABLE_FAILURE", "SUCCEEDED");
+        assertThat(jdbc.queryForObject("SELECT attempt_count FROM deliveries WHERE id = ?",
+                Integer.class, delivery)).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_attempts WHERE delivery_id = ?",
+                Integer.class, delivery)).isZero();
+        assertThat(attempts.deferClaimed(lease, Instant.now().plusSeconds(30),
+                "AUTH_RETRIES_EXHAUSTED")).isTrue();
+        assertThat(jdbc.queryForObject("SELECT status FROM delivery_work WHERE delivery_id = ?",
+                String.class, delivery)).isEqualTo("RETRY_SCHEDULED");
+        assertThat(jdbc.queryForObject("SELECT status FROM deliveries WHERE id = ?",
+                String.class, delivery)).isEqualTo("RETRY_SCHEDULED");
+        assertThat(attempts.recordAuthentication(lease, "SUCCEEDED", 200, null, started)).isFalse();
+    }
+
+    @Test
+    void reservesSecondWebhookAttemptAfterAuthenticationChallenge() {
+        UUID delivery = due(UUID.randomUUID());
+        DeliveryClaimService.Lease lease = claims.claim(delivery, "worker-refresh", 2, 20).orElseThrow();
+        DeliveryAttemptService.Attempt first = attempts.reserve(lease, 3);
+        assertThat(first.number()).isEqualTo(1);
+        assertThat(attempts.recordRefreshChallenge(lease, first, "expired token")).isTrue();
+        DeliveryAttemptService.Attempt second = attempts.reserve(lease, 3);
+        assertThat(second.number()).isEqualTo(2);
+        assertThat(attempts.finish(lease, second, 204, null, null, null)).isTrue();
+        assertThat(jdbc.queryForList("SELECT attempt_number || ':' || outcome || ':' || http_status "
+                + "FROM delivery_attempts WHERE delivery_id = ? ORDER BY attempt_number",
+                String.class, delivery)).containsExactly("1:AUTH_CHALLENGE:401", "2:SUCCEEDED:204");
+        assertThat(jdbc.queryForObject("SELECT attempt_count FROM deliveries WHERE id = ?",
+                Integer.class, delivery)).isEqualTo(2);
+    }
+
+    @Test
     void expiryRecoveryFencesOldTokenAndAllowsNewOwner() {
         UUID delivery = due(UUID.randomUUID());
         DeliveryClaimService.Lease old = claims.claim(delivery, "worker-old", 2, 20).orElseThrow();

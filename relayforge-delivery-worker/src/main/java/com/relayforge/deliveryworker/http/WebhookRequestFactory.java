@@ -3,6 +3,8 @@ package com.relayforge.deliveryworker.http;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.relayforge.deliveryworker.auth.AuthMaterial;
+import com.relayforge.deliveryworker.auth.StaticAuthenticationStrategy;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.time.Instant;
@@ -26,10 +28,18 @@ public final class WebhookRequestFactory {
     public Request build(UUID deliveryId, String eventLocator, String eventType,
             int attemptNumber, JsonNode data, JsonNode authentication,
             String signingSecret, Instant timestamp) {
+        return build(deliveryId, eventLocator, eventType, attemptNumber, data,
+                new StaticAuthenticationStrategy().resolve(authentication, null, () -> true),
+                signingSecret, timestamp);
+    }
+
+    public Request build(UUID deliveryId, String eventLocator, String eventType,
+            int attemptNumber, JsonNode data, AuthMaterial authentication,
+            String signingSecret, Instant timestamp) {
         if (deliveryId == null || eventLocator == null || !eventLocator.startsWith("evt_")
                 || eventType == null || !eventType.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,199}")
                 || attemptNumber < 1 || attemptNumber > 20 || data == null || !data.isObject()
-                || authentication == null || !authentication.isObject() || timestamp == null
+                || authentication == null || timestamp == null
                 || signingSecret == null) {
             throw new IllegalArgumentException("Invalid webhook request data");
         }
@@ -56,7 +66,12 @@ public final class WebhookRequestFactory {
         headers.put("X-RelayForge-Event-Type", eventType);
         headers.put("X-RelayForge-Timestamp", unixSeconds);
         headers.put("X-RelayForge-Signature", "v1=" + signature(signingSecret, unixSeconds, body));
-        applyAuthentication(headers, authentication);
+        authentication.headers().forEach((name, value) -> {
+            if (headers.keySet().stream().anyMatch(existing -> existing.equalsIgnoreCase(name))) {
+                throw new IllegalArgumentException("Authentication header conflicts with webhook header");
+            }
+            headers.put(name, value);
+        });
         return new Request(body, headers);
     }
 
@@ -82,37 +97,6 @@ public final class WebhookRequestFactory {
         } finally {
             Arrays.fill(key, (byte) 0);
         }
-    }
-
-    private void applyAuthentication(Map<String, String> headers, JsonNode authentication) {
-        String type = authentication.path("type").asText("");
-        switch (type) {
-            case "NONE" -> { }
-            case "BEARER" -> headers.put("Authorization", "Bearer " + required(authentication, "token"));
-            case "BASIC" -> {
-                String credentials = required(authentication, "username") + ":"
-                        + required(authentication, "password");
-                headers.put("Authorization", "Basic " + Base64.getEncoder().encodeToString(
-                        credentials.getBytes(StandardCharsets.UTF_8)));
-            }
-            case "STATIC_HEADER", "STATIC_API_KEY" -> {
-                String name = required(authentication, "header_name");
-                if (name.regionMatches(true, 0, "X-RelayForge-", 0, 13)
-                        || headers.keySet().stream().anyMatch(existing -> existing.equalsIgnoreCase(name))) {
-                    throw new IllegalStateException("Authentication header conflicts with webhook header");
-                }
-                headers.put(name, required(authentication, "value"));
-            }
-            default -> throw new IllegalStateException("Authentication strategy is unavailable");
-        }
-    }
-
-    private String required(JsonNode object, String field) {
-        JsonNode value = object.path(field);
-        if (!value.isTextual() || value.asText().isBlank()) {
-            throw new IllegalStateException("Authentication configuration is unavailable");
-        }
-        return value.asText();
     }
 
     public record Request(byte[] body, Map<String, String> headers) {

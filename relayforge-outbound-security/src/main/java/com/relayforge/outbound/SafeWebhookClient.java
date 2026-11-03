@@ -162,6 +162,88 @@ public final class SafeWebhookClient implements AutoCloseable {
         }
     }
 
+    public TokenResult sendToken(ValidatedDestination destination, byte[] body, String contentType,
+            Duration timeout, BooleanSupplier leaseValid) throws IOException {
+        return sendToken(destination, body, contentType, null, timeout, leaseValid);
+    }
+
+    public TokenResult sendToken(ValidatedDestination destination, byte[] body, String contentType,
+            String authorization, Duration timeout, BooleanSupplier leaseValid) throws IOException {
+        if (destination == null || body == null || body.length > 16384 || contentType == null
+                || !(contentType.equals("application/json")
+                || contentType.equals("application/x-www-form-urlencoded"))
+                || timeout == null || timeout.isNegative() || timeout.isZero()
+                || timeout.compareTo(Duration.ofSeconds(10)) > 0 || leaseValid == null
+                || authorization != null && (authorization.length() > 4096
+                || authorization.codePoints().anyMatch(value -> value < 0x20 || value == 0x7f))) {
+            throw new IllegalArgumentException("Invalid token request");
+        }
+        HttpPost request = new HttpPost(destination.uri());
+        if (authorization != null) {
+            request.setHeader("Authorization", authorization);
+        }
+        request.setEntity(new ByteArrayEntity(body, ContentType.parse(contentType)));
+        request.setConfig(RequestConfig.custom()
+                .setConnectionRequestTimeout(Timeout.ofSeconds(2))
+                .setConnectTimeout(Timeout.ofSeconds(2))
+                .setResponseTimeout(Timeout.ofMilliseconds(timeout.toMillis()))
+                .build());
+        Future<TokenResult> pending = requests.submit(() -> {
+            policy.revalidate(destination);
+            return client.execute(request, response -> {
+                byte[] bytes = new byte[0];
+                if (response.getEntity() != null) {
+                    try (InputStream stream = response.getEntity().getContent()) {
+                        bytes = stream.readNBytes(16385);
+                    }
+                }
+                if (bytes.length > 16384) {
+                    throw new IOException("Token response exceeds limit");
+                }
+                var header = response.getFirstHeader("Content-Type");
+                String responseType = header == null ? "" : header.getValue();
+                return new TokenResult(response.getCode(), bytes, responseType);
+            });
+        });
+        long deadline = System.nanoTime() + timeout.toNanos();
+        try {
+            while (true) {
+                if (!leaseValid.getAsBoolean()) {
+                    throw new IOException("Delivery lease was lost");
+                }
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    throw new IOException("Token request deadline exceeded");
+                }
+                try {
+                    return pending.get(Math.min(remaining, TimeUnit.MILLISECONDS.toNanos(250)),
+                            TimeUnit.NANOSECONDS);
+                } catch (TimeoutException stillRunning) {
+                    // Recheck the deadline and lease.
+                }
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Token request interrupted", interrupted);
+        } catch (ExecutionException failed) {
+            if (failed.getCause() instanceof UnsafeDestinationException unsafe) {
+                throw unsafe;
+            }
+            if (failed.getCause() instanceof InvalidDestinationException invalid) {
+                throw invalid;
+            }
+            if (failed.getCause() instanceof IOException unavailable) {
+                throw unavailable;
+            }
+            throw new IOException("Token request failed", failed.getCause());
+        } finally {
+            if (!pending.isDone()) {
+                request.cancel();
+                pending.cancel(true);
+            }
+        }
+    }
+
     private String sanitize(byte[] bytes) {
         String text = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
         StringBuilder result = new StringBuilder(Math.min(text.length(), 1024));
@@ -175,6 +257,22 @@ public final class SafeWebhookClient implements AutoCloseable {
     public record Result(int status, String excerpt, String retryAfter) {
         public Result(int status, String excerpt) {
             this(status, excerpt, null);
+        }
+    }
+
+    public record TokenResult(int status, byte[] body, String contentType) {
+        public TokenResult {
+            body = body.clone();
+        }
+
+        @Override
+        public byte[] body() {
+            return body.clone();
+        }
+
+        @Override
+        public String toString() {
+            return "TokenResult[status=" + status + ", body=[REDACTED], contentType=" + contentType + "]";
         }
     }
 

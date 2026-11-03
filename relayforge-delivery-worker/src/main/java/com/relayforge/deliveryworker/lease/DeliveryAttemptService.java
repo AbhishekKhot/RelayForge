@@ -227,6 +227,129 @@ public final class DeliveryAttemptService {
         });
     }
 
+    public boolean recordAuthentication(DeliveryClaimService.Lease lease, String outcome,
+            Integer httpStatus, String errorCode, Instant startedAt) {
+        Objects.requireNonNull(lease);
+        Objects.requireNonNull(startedAt);
+        if (outcome == null || !outcome.matches("[A-Z_]{1,32}")
+                || httpStatus != null && (httpStatus < 100 || httpStatus > 599)
+                || errorCode != null && !errorCode.matches("[A-Z_]{1,80}")) {
+            throw new IllegalArgumentException("Invalid authentication outcome");
+        }
+        return Boolean.TRUE.equals(transactions.execute(status -> {
+            var owned = jdbc.query("""
+                    SELECT work.delivery_id FROM delivery_work work
+                    WHERE work.delivery_id = ? AND work.accepted_day = ?
+                        AND work.organization_id = ? AND work.endpoint_id = ?
+                        AND work.status = 'IN_PROGRESS' AND work.lease_token = ?
+                        AND work.lease_owner = ? AND work.lease_expires_at > clock_timestamp()
+                        AND work.processing_deadline_at > clock_timestamp()
+                    FOR UPDATE
+                    """, (row, index) -> row.getObject(1, UUID.class), lease.deliveryId(),
+                    lease.acceptedDay(), lease.organizationId(), lease.endpointId(),
+                    lease.token(), lease.workerId());
+            if (owned.isEmpty()) {
+                return false;
+            }
+            int number = jdbc.queryForObject("""
+                    SELECT coalesce(max(attempt_number), 0) + 1 FROM authentication_attempts
+                    WHERE accepted_day = ? AND organization_id = ? AND delivery_id = ?
+                    """, Integer.class, lease.acceptedDay(), lease.organizationId(), lease.deliveryId());
+            jdbc.update("""
+                    INSERT INTO authentication_attempts (accepted_day, organization_id, endpoint_id,
+                        delivery_id, attempt_number, started_at, finished_at, outcome,
+                        http_status, duration_ms, error_code)
+                    VALUES (?, ?, ?, ?, ?, ?, clock_timestamp(), ?, ?,
+                        LEAST(2147483647, GREATEST(0,
+                            EXTRACT(EPOCH FROM (clock_timestamp() - ?::timestamptz)) * 1000)::bigint), ?)
+                    """, lease.acceptedDay(), lease.organizationId(), lease.endpointId(),
+                    lease.deliveryId(), number, Timestamp.from(startedAt), outcome,
+                    httpStatus, Timestamp.from(startedAt), errorCode);
+            return true;
+        }));
+    }
+
+    public boolean deferClaimed(DeliveryClaimService.Lease lease, Instant nextAttemptAt,
+            String errorCode) {
+        Objects.requireNonNull(lease);
+        Objects.requireNonNull(nextAttemptAt);
+        validateErrorCode(errorCode);
+        return Boolean.TRUE.equals(transactions.execute(status -> {
+            var owned = jdbc.query("""
+                    SELECT work.delivery_id FROM delivery_work work JOIN deliveries delivery
+                        ON delivery.accepted_day = work.accepted_day AND delivery.id = work.delivery_id
+                        AND delivery.organization_id = work.organization_id
+                    WHERE work.delivery_id = ? AND work.accepted_day = ?
+                        AND work.organization_id = ? AND work.status = 'IN_PROGRESS'
+                        AND work.lease_token = ? AND work.lease_owner = ?
+                        AND work.lease_expires_at > clock_timestamp()
+                        AND work.processing_deadline_at > clock_timestamp()
+                        AND delivery.status = 'IN_PROGRESS' AND delivery.lease_token = ?
+                        AND delivery.version = ?
+                    FOR UPDATE OF work, delivery
+                    """, (row, index) -> row.getObject(1, UUID.class), lease.deliveryId(),
+                    lease.acceptedDay(), lease.organizationId(), lease.token(), lease.workerId(),
+                    lease.token(), lease.version());
+            if (owned.isEmpty()) {
+                return false;
+            }
+            jdbc.update("""
+                    UPDATE deliveries SET status = 'RETRY_SCHEDULED', last_error_code = ?,
+                        next_attempt_at = ?, lease_owner = NULL, lease_token = NULL,
+                        lease_expires_at = NULL, processing_deadline_at = NULL,
+                        updated_at = clock_timestamp(), version = version + 1
+                    WHERE accepted_day = ? AND id = ? AND organization_id = ? AND lease_token = ?
+                    """, errorCode, Timestamp.from(nextAttemptAt), lease.acceptedDay(),
+                    lease.deliveryId(), lease.organizationId(), lease.token());
+            jdbc.update("""
+                    UPDATE delivery_work SET status = 'RETRY_SCHEDULED', next_attempt_at = ?,
+                        lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
+                        processing_deadline_at = NULL, updated_at = clock_timestamp()
+                    WHERE delivery_id = ? AND lease_token = ?
+                    """, Timestamp.from(nextAttemptAt), lease.deliveryId(), lease.token());
+            return true;
+        }));
+    }
+
+    public boolean recordRefreshChallenge(DeliveryClaimService.Lease lease, Attempt attempt,
+            String responseExcerpt) {
+        Objects.requireNonNull(lease);
+        Objects.requireNonNull(attempt);
+        if (responseExcerpt != null && (responseExcerpt.length() > 1000
+                || responseExcerpt.codePoints().anyMatch(value -> value < 0x20 || value > 0x7e))) {
+            throw new IllegalArgumentException("Invalid webhook response excerpt");
+        }
+        return Boolean.TRUE.equals(transactions.execute(status -> {
+            var owned = jdbc.query("""
+                    SELECT delivery.version FROM delivery_work work JOIN deliveries delivery
+                        ON delivery.accepted_day = work.accepted_day AND delivery.id = work.delivery_id
+                        AND delivery.organization_id = work.organization_id
+                    WHERE work.delivery_id = ? AND work.accepted_day = ?
+                        AND work.organization_id = ? AND work.status = 'IN_PROGRESS'
+                        AND work.lease_token = ? AND work.lease_owner = ?
+                        AND work.lease_expires_at > clock_timestamp()
+                        AND work.processing_deadline_at > clock_timestamp()
+                        AND delivery.status = 'IN_PROGRESS' AND delivery.lease_token = ?
+                        AND delivery.version = ?
+                    FOR UPDATE OF work, delivery
+                    """, (row, index) -> row.getLong(1), lease.deliveryId(), lease.acceptedDay(),
+                    lease.organizationId(), lease.token(), lease.workerId(), lease.token(), lease.version());
+            if (owned.isEmpty()) {
+                return false;
+            }
+            return jdbc.update("""
+                    UPDATE delivery_attempts SET finished_at = clock_timestamp(),
+                        outcome = 'AUTH_CHALLENGE', http_status = 401,
+                        duration_ms = LEAST(2147483647,
+                            GREATEST(0, EXTRACT(EPOCH FROM (clock_timestamp() - started_at)) * 1000)::bigint),
+                        error_code = 'AUTH_REFRESH', response_excerpt = ?
+                    WHERE accepted_day = ? AND id = ? AND organization_id = ?
+                        AND delivery_id = ? AND outcome = 'IN_PROGRESS'
+                    """, responseExcerpt, lease.acceptedDay(), attempt.id(),
+                    lease.organizationId(), lease.deliveryId()) == 1;
+        }));
+    }
+
     public boolean finish(DeliveryClaimService.Lease lease, Attempt attempt, int httpStatus,
             String errorCode, String responseExcerpt, Instant nextAttemptAt) {
         Objects.requireNonNull(lease);
