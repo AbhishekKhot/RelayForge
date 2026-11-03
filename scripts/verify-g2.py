@@ -4,8 +4,15 @@ import subprocess
 import time
 from uuid import uuid4
 
-from verify_g1 import mapping
 from verify_support import post, query, settings
+
+
+def mapping(simulator, path, response, *, authorization=None):
+    body = {"request": {"method": "POST", "urlPath": path}, "response": response}
+    if authorization:
+        body["request"]["headers"] = {"Authorization": {"equalTo": authorization}}
+    status, result = post(simulator, "/__admin/mappings", body, {})
+    assert status == 201, (status, result)
 
 
 def wait_delivery(locator):
