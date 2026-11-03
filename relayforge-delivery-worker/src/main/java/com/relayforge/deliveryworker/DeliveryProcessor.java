@@ -22,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -118,12 +119,20 @@ public final class DeliveryProcessor implements AutoCloseable {
             attempts.rejectUnclaimed(deliveryId, "CONFIGURATION_INVALID");
             return;
         }
-        if (!quotaGate.available()) {
+        String permitId = UUID.randomUUID().toString();
+        if (!quotaGate.reserve(candidate.organizationId(), permitId, organizationConcurrency)) {
             attempts.deferUnclaimed(deliveryId, clock.instant().plusSeconds(30));
             return;
         }
-        var claimed = claims.claim(deliveryId, workerId, concurrency, organizationConcurrency, 200);
+        Optional<DeliveryClaimService.Lease> claimed;
+        try {
+            claimed = claims.claim(deliveryId, workerId, concurrency, organizationConcurrency, 200);
+        } catch (RuntimeException failure) {
+            quotaGate.release(candidate.organizationId(), permitId);
+            throw failure;
+        }
         if (claimed.isEmpty()) {
+            quotaGate.release(candidate.organizationId(), permitId);
             return;
         }
         DeliveryClaimService.Lease lease = claimed.get();
@@ -136,6 +145,7 @@ public final class DeliveryProcessor implements AutoCloseable {
                         var renewed = claims.renew(active.get());
                         if (renewed.isPresent()) {
                             active.set(renewed.get());
+                            quotaGate.renew(lease.organizationId(), permitId);
                         } else {
                             lost.set(true);
                         }
@@ -270,6 +280,7 @@ public final class DeliveryProcessor implements AutoCloseable {
             throw new IllegalStateException("Delivery reference is unavailable", unavailable);
         } finally {
             renewal.cancel(true);
+            quotaGate.release(lease.organizationId(), permitId);
         }
     }
 
