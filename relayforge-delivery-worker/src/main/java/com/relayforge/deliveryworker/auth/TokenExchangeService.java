@@ -54,6 +54,11 @@ public final class TokenExchangeService {
 
     public AuthMaterial acquire(JsonNode configuration, DeliveryClaimService.Lease lease,
             BooleanSupplier leaseValid) {
+        return acquireToken(configuration, lease, leaseValid).material();
+    }
+
+    public AcquiredToken acquireToken(JsonNode configuration, DeliveryClaimService.Lease lease,
+            BooleanSupplier leaseValid) {
         Objects.requireNonNull(lease);
         Objects.requireNonNull(leaseValid);
         RequestSpec spec;
@@ -80,7 +85,7 @@ public final class TokenExchangeService {
                                 ? remaining : Duration.ofSeconds(10), leaseValid);
                 httpStatus = response.status();
                 if (httpStatus >= 200 && httpStatus < 300) {
-                    AuthMaterial token = extract(response, spec);
+                    AcquiredToken token = extract(response, spec);
                     attempts.recordAuthentication(lease, "SUCCEEDED", httpStatus, null, startedAt);
                     return token;
                 }
@@ -145,7 +150,7 @@ public final class TokenExchangeService {
         return false;
     }
 
-    private AuthMaterial extract(SafeWebhookClient.TokenResult response, RequestSpec spec) {
+    private AcquiredToken extract(SafeWebhookClient.TokenResult response, RequestSpec spec) {
         try {
             if (!response.contentType().toLowerCase(java.util.Locale.ROOT)
                     .startsWith("application/json")) {
@@ -157,13 +162,16 @@ public final class TokenExchangeService {
                     || !BEARER_TOKEN.matcher(value.asText()).matches()) {
                 throw new IllegalArgumentException();
             }
+            Instant expiresAt = null;
             if (spec.expiryPath() != null) {
                 JsonNode expiry = path(body, spec.expiryPath());
-                if (!expiry.canConvertToLong() || expiry.asLong() <= 0) {
+                if (!expiry.canConvertToLong() || expiry.asLong() <= 0
+                        || expiry.asLong() > 86400L * 365) {
                     throw new IllegalArgumentException();
                 }
+                expiresAt = clock.instant().plusSeconds(expiry.asLong());
             }
-            return new AuthMaterial(Map.of("Authorization", "Bearer " + value.asText()));
+            return new AcquiredToken(value.asText(), expiresAt);
         } catch (IOException | RuntimeException invalid) {
             throw new TokenFailure(false, "AUTH_RESPONSE_INVALID");
         }
@@ -346,6 +354,21 @@ public final class TokenExchangeService {
 
         public String code() {
             return code;
+        }
+    }
+
+    public record AcquiredToken(String token, Instant expiresAt) {
+        public AcquiredToken {
+            Objects.requireNonNull(token);
+        }
+
+        public AuthMaterial material() {
+            return new AuthMaterial(Map.of("Authorization", "Bearer " + token));
+        }
+
+        @Override
+        public String toString() {
+            return "AcquiredToken[token=[REDACTED], expiresAt=" + expiresAt + "]";
         }
     }
 }

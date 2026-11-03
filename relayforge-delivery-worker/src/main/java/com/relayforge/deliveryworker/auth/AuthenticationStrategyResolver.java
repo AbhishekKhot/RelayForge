@@ -23,6 +23,16 @@ public final class AuthenticationStrategyResolver {
         return strategy(configuration).resolve(configuration, lease, leaseValid);
     }
 
+    public AuthMaterial resolve(JsonNode configuration, DeliveryClaimService.Lease lease,
+            BooleanSupplier leaseValid, TokenCacheKey key) {
+        return strategy(configuration).resolve(configuration, lease, leaseValid, key);
+    }
+
+    public AuthMaterial refresh(JsonNode configuration, DeliveryClaimService.Lease lease,
+            BooleanSupplier leaseValid, TokenCacheKey key, AuthMaterial previous) {
+        return strategy(configuration).refresh(configuration, lease, leaseValid, key, previous);
+    }
+
     public boolean dynamic(JsonNode configuration) {
         return strategy(configuration) == tokenStrategy;
     }

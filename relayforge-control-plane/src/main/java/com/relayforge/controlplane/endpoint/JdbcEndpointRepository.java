@@ -112,6 +112,8 @@ public final class JdbcEndpointRepository implements EndpointRepository {
                   auth_key_version = CASE WHEN ? THEN ? ELSE auth_key_version END,
                   auth_nonce = CASE WHEN ? THEN ? ELSE auth_nonce END,
                   auth_config_version = CASE WHEN ? THEN ? ELSE auth_config_version END,
+                  auth_credential_version = CASE WHEN ? THEN auth_credential_version + 1
+                      ELSE auth_credential_version END,
                   updated_at = clock_timestamp(), version = version + 1
                 WHERE organization_id = ? AND id = ? AND version = ?
                 RETURNING version
@@ -124,6 +126,7 @@ public final class JdbcEndpointRepository implements EndpointRepository {
                 update.replaceAuthentication(), auth == null ? null : auth.keyVersion(),
                 update.replaceAuthentication(), auth == null ? null : auth.nonce(),
                 update.replaceAuthentication(), auth == null ? null : expectedVersion + 1,
+                update.replaceAuthentication(),
                 organizationId, endpointId, expectedVersion).stream().findFirst();
     }
 

@@ -39,7 +39,7 @@ verify_migrations() {
     for database in relayforge_control relayforge_ingestion relayforge_delivery; do
         local expected=1
         if [[ "$database" == relayforge_control ]]; then
-            expected=4
+            expected=5
         elif [[ "$database" == relayforge_ingestion ]]; then
             expected=2
         elif [[ "$database" == relayforge_delivery ]]; then
