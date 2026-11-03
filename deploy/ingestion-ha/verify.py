@@ -147,6 +147,7 @@ def verify():
     run(["python3", "scripts/verify-e2.py"])
     run(["python3", "scripts/verify-g1.py"])
     run(["python3", "scripts/verify-g2.py"])
+    run(["python3", "scripts/verify-h2.py"])
     print("C1 HA event acceptance, idempotency, and standby-loss checks passed")
 
 
