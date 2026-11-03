@@ -171,7 +171,10 @@ class RoutingServiceIT {
     }
 
     private static int count(String table, UUID organization) {
-        return jdbc.queryForObject("SELECT count(*) FROM " + table + " WHERE organization_id = ?",
+        String filter = table.equals("delivery_outbox")
+                ? " AND message_type = 'delivery.ready.v1'" : "";
+        return jdbc.queryForObject("SELECT count(*) FROM " + table + " WHERE organization_id = ?"
+                + filter,
                 Integer.class, organization);
     }
 }

@@ -208,7 +208,7 @@ class DeliveryClaimServiceIT {
                 Timestamp.class, delivery).toInstant()).isEqualTo(retryAt);
         assertThat(jdbc.queryForObject("SELECT next_attempt_at FROM delivery_work WHERE delivery_id = ?",
                 Timestamp.class, delivery).toInstant()).isEqualTo(retryAt);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_outbox WHERE delivery_id = ?",
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_outbox WHERE delivery_id = ? AND message_type = 'delivery.ready.v1'",
                 Integer.class, delivery)).isZero();
     }
 
@@ -224,7 +224,7 @@ class DeliveryClaimServiceIT {
         assertThat(claims.recoverExpired(10)).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT outcome FROM delivery_attempts WHERE id = ?",
                 String.class, unfinished.id())).isEqualTo("UNKNOWN");
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_outbox WHERE delivery_id = ?",
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_outbox WHERE delivery_id = ? AND message_type = 'delivery.ready.v1'",
                 Integer.class, delivery)).isZero();
         DeliveryClaimService.Lease renewed = claims.claim(delivery, "worker-recovered", 2, 20)
                 .orElseThrow();
@@ -264,7 +264,7 @@ class DeliveryClaimServiceIT {
         attempts.deferUnclaimed(delivery, Instant.now().plusSeconds(30));
         assertThat(jdbc.queryForObject("SELECT attempt_count FROM deliveries WHERE id = ?",
                 Integer.class, delivery)).isZero();
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_outbox WHERE delivery_id = ?",
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_outbox WHERE delivery_id = ? AND message_type = 'delivery.ready.v1'",
                 Integer.class, delivery)).isEqualTo(1);
         assertThat(claims.claim(delivery, "worker-early", 2, 20)).isEmpty();
     }

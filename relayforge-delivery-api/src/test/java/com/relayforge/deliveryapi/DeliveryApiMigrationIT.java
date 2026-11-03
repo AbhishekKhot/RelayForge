@@ -37,7 +37,7 @@ class DeliveryApiMigrationIT {
 
     @Test
     void startupMigratesEmptyDatabase() throws Exception {
-        assertThat(flyway.info().current().getVersion().toString()).isEqualTo("4");
+        assertThat(flyway.info().current().getVersion().toString()).isEqualTo("5");
         try (var connection = DriverManager.getConnection(
                 DATABASE.getJdbcUrl(), DATABASE.getUsername(), DATABASE.getPassword());
                 var statement = connection.createStatement();

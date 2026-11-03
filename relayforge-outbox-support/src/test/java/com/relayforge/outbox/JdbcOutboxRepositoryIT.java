@@ -166,6 +166,32 @@ class JdbcOutboxRepositoryIT {
     }
 
     @Test
+    void analyticsRowsUseFactIdAsEnvelopeAggregate() {
+        UUID event = UUID.randomUUID();
+        UUID delivery = UUID.randomUUID();
+        UUID fact = UUID.randomUUID();
+        String payload = "{\"fact_id\":\"" + fact + "\",\"organization_id\":\""
+                + ORGANIZATION + "\"}";
+        jdbc.update("""
+                INSERT INTO ingestion_outbox (id, organization_id, event_id, message_type,
+                    topic, partition_key, payload) VALUES (?, ?, ?, 'analytics.delivery-facts.v1',
+                    'relayforge.analytics.delivery-facts.v1', ?, ?::jsonb)
+                """, UUID.randomUUID(), ORGANIZATION, event, fact.toString(), payload);
+        jdbc.update("""
+                INSERT INTO delivery_outbox (id, organization_id, event_id, delivery_id,
+                    message_type, topic, partition_key, payload)
+                VALUES (?, ?, ?, ?, 'analytics.delivery-facts.v1',
+                    'relayforge.analytics.delivery-facts.v1', ?, ?::jsonb)
+                """, UUID.randomUUID(), ORGANIZATION, event, delivery, fact.toString(), payload);
+        assertThat(repository(JdbcOutboxRepository.Owner.INGESTION)
+                .claim("worker", 1, Duration.ofSeconds(30)).getFirst().aggregateId())
+                .isEqualTo(fact.toString());
+        assertThat(repository(JdbcOutboxRepository.Owner.DELIVERY)
+                .claim("worker", 1, Duration.ofSeconds(30)).getFirst().aggregateId())
+                .isEqualTo(fact.toString());
+    }
+
+    @Test
     void doesNotTransferOversizedPayloadToThePublisher() {
         UUID id = UUID.randomUUID();
         String oversized = "{\"body\":\"" + "x".repeat(70000) + "\"}";

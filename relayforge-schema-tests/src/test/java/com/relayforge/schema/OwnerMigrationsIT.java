@@ -69,6 +69,7 @@ class OwnerMigrationsIT {
                 execute(connection, "INSERT INTO events (accepted_day, id, organization_id, event_type, payload, payload_hash, idempotency_key, accepted_at) VALUES (current_date, '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002', 'order.created', '{}'::jsonb, decode(repeat('aa', 32), 'hex'), 'today', now())");
                 execute(connection, "INSERT INTO events (accepted_day, id, organization_id, event_type, payload, payload_hash, idempotency_key, accepted_at) VALUES (current_date + 1, '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002', 'order.created', '{}'::jsonb, decode(repeat('aa', 32), 'hex'), 'tomorrow', now() + interval '1 day')");
                 assertThat(count(connection, "SELECT count(*) FROM events WHERE organization_id = '00000000-0000-0000-0000-000000000002'")).isEqualTo(2);
+                assertThat(count(connection, "SELECT count(*) FROM ingestion_outbox WHERE message_type = 'analytics.delivery-facts.v1' AND payload ->> 'fact_type' = 'event.accepted' AND payload ->> 'version' = '1' AND NOT payload ? 'payload'")).isEqualTo(2);
                 assertThatThrownBy(() -> execute(connection, "INSERT INTO events (accepted_day, organization_id, event_type, payload, payload_hash, idempotency_key, accepted_at) VALUES (current_date + 8, '00000000-0000-0000-0000-000000000002', 'order.created', '{}'::jsonb, decode(repeat('aa', 32), 'hex'), 'unprepared', now() + interval '8 days')"))
                         .isInstanceOf(SQLException.class);
                 execute(connection, "INSERT INTO idempotency_registry (organization_id, idempotency_key, bucket_id, request_hash, request_hash_version, event_id, event_locator, accepted_day, accepted_at, expires_at) VALUES ('00000000-0000-0000-0000-000000000001', 'same', 0, decode(repeat('aa', 32), 'hex'), 1, gen_random_uuid(), 'v1:one', current_date, now(), now() + interval '2160 hours')");
@@ -85,11 +86,37 @@ class OwnerMigrationsIT {
                 assertThat(count(connection, "SELECT count(*) FROM pg_inherits WHERE inhparent = 'delivery_attempts'::regclass")).isEqualTo(9);
                 execute(connection, "INSERT INTO routing_progress (accepted_day, event_id, organization_id, event_accepted_at, ingestion_shard_id, delivery_shard_id, status) VALUES (current_date, '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', now(), 'ingestion-1', 'delivery-1', 'ROUTING')");
                 execute(connection, "INSERT INTO deliveries (accepted_day, id, organization_id, event_id, endpoint_id) VALUES (current_date, '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000004')");
+                assertThat(count(connection, "SELECT count(*) FROM delivery_outbox WHERE message_type = 'analytics.delivery-facts.v1' AND payload ->> 'fact_type' = 'delivery.created'")).isEqualTo(1);
                 assertThatThrownBy(() -> execute(connection, "INSERT INTO delivery_attempts (accepted_day, organization_id, delivery_id, attempt_number, started_at, outcome) VALUES (current_date, '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 1, now(), 'FAILED')"))
                         .isInstanceOf(SQLException.class);
                 execute(connection, "INSERT INTO delivery_attempts (accepted_day, organization_id, delivery_id, attempt_number, started_at, outcome) VALUES (current_date, '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 1, now(), 'FAILED')");
                 assertThatThrownBy(() -> execute(connection, "INSERT INTO delivery_attempts (accepted_day, organization_id, delivery_id, attempt_number, started_at, outcome) VALUES (current_date, '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 1, now(), 'FAILED')"))
                         .isInstanceOf(SQLException.class);
+                execute(connection, "UPDATE delivery_attempts SET finished_at = now(), outcome = 'FAILED', http_status = 500, error_code = 'AUTH_NETWORK' WHERE delivery_id = '00000000-0000-0000-0000-000000000001'");
+                assertThat(count(connection, "SELECT count(*) FROM delivery_outbox WHERE payload ->> 'fact_type' = 'delivery.attempt.finished' AND payload ->> 'version' = '1' AND payload ->> 'error_code' = 'AUTH_NETWORK'")).isEqualTo(1);
+                execute(connection, "UPDATE delivery_attempts SET outcome = 'UNKNOWN', error_code = 'LEASE_EXPIRED' WHERE delivery_id = '00000000-0000-0000-0000-000000000001'");
+                assertThat(count(connection, "SELECT count(*) FROM delivery_outbox WHERE payload ->> 'fact_type' = 'delivery.attempt.finished' AND payload ->> 'version' = '2' AND payload ->> 'error_code' = 'LEASE_EXPIRED'")).isEqualTo(1);
+                execute(connection, "UPDATE delivery_attempts SET outcome = 'UNKNOWN', error_code = 'LEASE_EXPIRED' WHERE delivery_id = '00000000-0000-0000-0000-000000000001'");
+                assertThat(count(connection, "SELECT count(*) FROM delivery_outbox WHERE payload ->> 'fact_type' = 'delivery.attempt.finished'")).isEqualTo(2);
+                assertThat(count(connection, "SELECT count(DISTINCT payload ->> 'fact_id') FROM delivery_outbox WHERE payload ->> 'fact_type' = 'delivery.attempt.finished'")).isEqualTo(1);
+                assertThat(count(connection, "SELECT count(DISTINCT payload ->> 'event_date') FROM delivery_outbox WHERE payload ->> 'fact_type' = 'delivery.attempt.finished'")).isEqualTo(1);
+                assertThat(count(connection, "SELECT count(*) FROM delivery_outbox WHERE message_type = 'analytics.delivery-facts.v1' AND (payload ? 'response_excerpt' OR payload ? 'error_detail' OR payload ? 'authentication')")).isZero();
+                execute(connection, "UPDATE deliveries SET status = 'RETRY_SCHEDULED', version = version + 1 WHERE id = '00000000-0000-0000-0000-000000000001'");
+                execute(connection, "UPDATE deliveries SET status = 'DEAD_LETTERED', version = version + 1 WHERE id = '00000000-0000-0000-0000-000000000001'");
+                assertThat(count(connection, "SELECT count(*) FROM delivery_outbox WHERE payload ->> 'fact_type' IN ('delivery.retry_scheduled', 'delivery.dead_lettered')")).isEqualTo(2);
+                execute(connection, "UPDATE deliveries SET status = 'DEAD_LETTERED' WHERE id = '00000000-0000-0000-0000-000000000001'");
+                assertThat(count(connection, "SELECT count(*) FROM delivery_outbox WHERE payload ->> 'fact_type' = 'delivery.dead_lettered'")).isEqualTo(1);
+                execute(connection, "INSERT INTO deliveries (accepted_day, id, organization_id, event_id, endpoint_id, generation) VALUES (current_date, '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000004', 2)");
+                assertThat(count(connection, "SELECT count(*) FROM delivery_outbox WHERE payload ->> 'fact_type' = 'delivery.replayed'")).isEqualTo(1);
+                execute(connection, "UPDATE deliveries SET status = 'SUCCEEDED', completed_at = now(), version = version + 1 WHERE id = '00000000-0000-0000-0000-000000000002'");
+                assertThat(count(connection, "SELECT count(*) FROM delivery_outbox WHERE payload ->> 'fact_type' = 'delivery.succeeded'")).isEqualTo(1);
+                connection.setAutoCommit(false);
+                execute(connection, "INSERT INTO deliveries (accepted_day, id, organization_id, event_id, endpoint_id, generation) VALUES (current_date, '00000000-0000-0000-0000-000000000005', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000004', 3)");
+                assertThat(count(connection, "SELECT count(*) FROM delivery_outbox WHERE payload ->> 'fact_type' = 'delivery.replayed'")).isEqualTo(2);
+                connection.rollback();
+                assertThat(count(connection, "SELECT count(*) FROM delivery_outbox WHERE payload ->> 'fact_type' = 'delivery.replayed'")).isEqualTo(1);
+                assertThat(count(connection, "SELECT count(*) FROM deliveries WHERE id = '00000000-0000-0000-0000-000000000005'")).isZero();
+                connection.setAutoCommit(true);
         }
     }
 
@@ -102,8 +129,8 @@ class OwnerMigrationsIT {
                 .load();
         int expected = switch (owner) {
             case "control-plane" -> 5;
-            case "ingestion" -> 2;
-            case "delivery" -> 4;
+            case "ingestion" -> 3;
+            case "delivery" -> 5;
             default -> 1;
         };
         assertThat(flyway.migrate().migrationsExecuted).isEqualTo(expected);

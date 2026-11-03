@@ -55,9 +55,9 @@ class RetrySchedulerServiceIT {
         assertThat(scheduler.scanDue(10)).isZero();
         assertThat(state(due)).isEqualTo("ENQUEUED:ENQUEUED");
         assertThat(state(future)).isEqualTo("RETRY_SCHEDULED:RETRY_SCHEDULED");
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_outbox WHERE delivery_id = ?",
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_outbox WHERE delivery_id = ? AND message_type = 'delivery.ready.v1'",
                 Integer.class, due)).isEqualTo(1);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_outbox WHERE delivery_id = ?",
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_outbox WHERE delivery_id = ? AND message_type = 'delivery.ready.v1'",
                 Integer.class, future)).isZero();
     }
 
@@ -77,7 +77,7 @@ class RetrySchedulerServiceIT {
             start.countDown();
             assertThat(first.get() + second.get()).isEqualTo(1);
         }
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_outbox WHERE delivery_id = ?",
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_outbox WHERE delivery_id = ? AND message_type = 'delivery.ready.v1'",
                 Integer.class, delivery)).isEqualTo(1);
     }
 
@@ -91,7 +91,7 @@ class RetrySchedulerServiceIT {
                     .isInstanceOf(DataAccessException.class);
             assertThat(state(delivery)).isEqualTo("RETRY_SCHEDULED:RETRY_SCHEDULED");
             assertThat(jdbc.queryForObject(
-                    "SELECT count(*) FROM delivery_outbox WHERE delivery_id = ?",
+                    "SELECT count(*) FROM delivery_outbox WHERE delivery_id = ? AND message_type = 'delivery.ready.v1'",
                     Integer.class, delivery)).isZero();
         } finally {
             jdbc.execute("ALTER TABLE delivery_outbox DROP CONSTRAINT reject_ready_test");
@@ -108,7 +108,7 @@ class RetrySchedulerServiceIT {
                 String.class, delivery)).isEqualTo("EVENT_EXPIRED");
         assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_work WHERE delivery_id = ?",
                 Integer.class, delivery)).isZero();
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_outbox WHERE delivery_id = ?",
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_outbox WHERE delivery_id = ? AND message_type = 'delivery.ready.v1'",
                 Integer.class, delivery)).isZero();
     }
 

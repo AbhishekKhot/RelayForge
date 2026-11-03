@@ -51,7 +51,9 @@ def get(base, path, headers):
 def count(table, organization_id, status=None):
     assert table in {"events", "ingestion_outbox"}
     assert status is None or (table == "ingestion_outbox" and status == "PUBLISHED")
-    status_filter = " AND status = 'PUBLISHED'" if status else ""
+    status_filter = " AND message_type = 'event.accepted.v1'" if table == "ingestion_outbox" else ""
+    if status:
+        status_filter += " AND status = 'PUBLISHED'"
     result = run(HA + ["exec", "-T", "ingestion-primary", "sh", "-c",
                        'PGPASSWORD="$POSTGRES_PASSWORD" psql -U "$POSTGRES_USER" '
                        '-d relayforge_ingestion -At'],
@@ -150,9 +152,11 @@ def verify():
 
 def delivery_count(table, organization_id):
     assert table in {"routing_targets", "deliveries", "delivery_work", "delivery_outbox"}
+    message_filter = " AND message_type = 'delivery.ready.v1'" if table == "delivery_outbox" else ""
     result = run(HA + ["exec", "-T", "postgres", "sh", "-c",
                        'psql -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d relayforge_delivery'],
-                 input=f"SELECT count(*) FROM {table} WHERE organization_id = '{organization_id}';\n",
+                 input=f"SELECT count(*) FROM {table} WHERE organization_id = '{organization_id}'"
+                       f"{message_filter};\n",
                  capture_output=True)
     return int(result.stdout.strip())
 
@@ -270,7 +274,8 @@ def verify_routing(env, control, ingestion):
                     'message_type', message_type, 'schema_version', 1, 'occurred_at', created_at,
                     'organization_id', organization_id, 'aggregate_id', event_id::text,
                     'correlation_id', 'msg_' || id::text, 'payload', payload)::text
-                    FROM ingestion_outbox WHERE organization_id = '%s' AND partition_key = '%s';
+                    FROM ingestion_outbox WHERE organization_id = '%s' AND partition_key = '%s'
+                        AND message_type = 'event.accepted.v1';
                     """ % (organization_id, locator), capture_output=True)
     duplicate = result.stdout.strip()
     assert duplicate

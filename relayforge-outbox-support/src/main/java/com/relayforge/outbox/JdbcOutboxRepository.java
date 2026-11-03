@@ -105,8 +105,10 @@ public final class JdbcOutboxRepository implements OutboxRepository {
 
     public enum Owner {
         CONTROL("control_outbox", "o.aggregate_id"),
-        INGESTION("ingestion_outbox", "o.event_id::text"),
-        DELIVERY("delivery_outbox", "COALESCE(o.delivery_id::text, o.event_id::text)");
+        INGESTION("ingestion_outbox", "CASE WHEN o.message_type = 'analytics.delivery-facts.v1'"
+                + " THEN o.payload ->> 'fact_id' ELSE o.event_id::text END"),
+        DELIVERY("delivery_outbox", "CASE WHEN o.message_type = 'analytics.delivery-facts.v1'"
+                + " THEN o.payload ->> 'fact_id' ELSE COALESCE(o.delivery_id::text, o.event_id::text) END");
 
         private final String tableName;
         private final String aggregateIdSql;
