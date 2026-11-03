@@ -180,6 +180,20 @@ class OrganizationProvisioningIT {
     }
 
     @Test
+    void checksDedicatedAnalyticsReadScope() throws Exception {
+        ResponseEntity<JsonNode> organization = post("/v1/organizations", PROVISIONING_CREDENTIAL,
+                Map.of("name", "Analytics Reader"));
+        String initialKey = organization.getBody().path("data").path("api_key").asText();
+        ResponseEntity<JsonNode> rotated = post("/v1/api-keys/" + initialKey.split("_")[2] + "/rotate",
+                PROVISIONING_CREDENTIAL, Map.of("scopes", java.util.List.of("analytics:read")));
+        String key = rotated.getBody().path("data").path("api_key").asText();
+        assertThat(get("/v1/auth/check?scope=analytics:read", key).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+        assertThat(get("/v1/auth/check?scope=deliveries:read", key).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
     void rejectsExpiredKeysAndSuspendedOrganizations() throws Exception {
         ResponseEntity<JsonNode> organization = post("/v1/organizations", PROVISIONING_CREDENTIAL,
                 Map.of("name", "Expiring Owner"));

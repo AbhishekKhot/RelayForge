@@ -357,10 +357,12 @@ services:
       args: { MODULE: relayforge-analytics-api }
     environment:
       <<: *clickhouse-env
+      RELAYFORGE_CONTROL_INTERNAL_URL: ${CONTROL_INTERNAL_URL:?Set CONTROL_INTERNAL_URL in .env}
     ports:
       - "127.0.0.1:${ANALYTICS_API_HOST_PORT:?Set ANALYTICS_API_HOST_PORT in .env}:8080"
     depends_on:
       clickhouse: { condition: service_healthy }
+      control-plane: { condition: service_healthy }
 
   test-control-plane:
     <<: *test
