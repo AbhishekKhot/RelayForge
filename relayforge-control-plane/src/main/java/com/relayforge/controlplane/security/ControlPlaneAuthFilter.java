@@ -97,7 +97,8 @@ public final class ControlPlaneAuthFilter extends OncePerRequestFilter {
                 return "events:write";
             }
             if (requested.equals("events:read") || requested.equals("deliveries:read")
-                    || requested.equals("deliveries:replay")) {
+                    || requested.equals("deliveries:replay")
+                    || requested.equals("analytics:read")) {
                 return requested;
             }
             return null;
