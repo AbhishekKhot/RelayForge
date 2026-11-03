@@ -65,11 +65,15 @@ public final class ControlPlaneAuthenticator implements OrganizationAuthenticato
             }
             JsonNode parsed = json.readTree(body);
             UUID organizationId = UUID.fromString(parsed.path("organization_id").asText());
-            int limit = parsed.path("events_per_minute").asInt(-1);
-            if (limit < 1 || limit > 60000) {
+            JsonNode quotas = parsed.path("quotas");
+            int limit = quotas.path("events_per_minute").asInt(-1);
+            int burst = quotas.path("burst_events").asInt(-1);
+            int payloadBytes = quotas.path("max_event_payload_bytes").asInt(-1);
+            if (limit < 1 || limit > 60000 || burst < 1 || burst > 2000 || burst > limit
+                    || payloadBytes < 1 || payloadBytes > 262144) {
                 throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE);
             }
-            return new AuthenticatedOrganization(organizationId, limit);
+            return new AuthenticatedOrganization(organizationId, limit, burst, payloadBytes);
         } catch (IOException | InterruptedException | IllegalArgumentException failure) {
             if (failure instanceof InterruptedException) {
                 Thread.currentThread().interrupt();

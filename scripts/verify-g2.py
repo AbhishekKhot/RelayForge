@@ -4,7 +4,7 @@ import subprocess
 import time
 from uuid import uuid4
 
-from verify_support import post, query, settings
+from verify_support import post, post_status, query, settings
 
 
 def mapping(simulator, path, response, *, authorization=None):
@@ -104,16 +104,23 @@ def main():
             time.sleep(1)
         else:
             raise AssertionError("G2 outage endpoint not projected")
-        started = time.monotonic()
-        status, accepted = post(ingestion, "/v1/events", {
-            "event_type": event_type + "outage", "data": {"check": str(uuid4())}},
-            {**bearer, "Idempotency-Key": str(uuid4())})
-        assert status == 202
-        assert wait_delivery(accepted["data"]["event_id"]) == "SUCCEEDED"
-        assert time.monotonic() - started < 90
+        event = {
+            "event_type": event_type + "outage", "data": {"check": str(uuid4())}}
+        event_key = {**bearer, "Idempotency-Key": str(uuid4())}
+        status, unavailable = post_status(ingestion, "/v1/events", event, event_key)
+        assert status == 503, unavailable
     finally:
         subprocess.run(["docker", "compose", "start", "redis"], check=True)
-    print("G2 token reuse, endpoint isolation, and Redis outage fallback passed")
+    for _ in range(30):
+        status, accepted = post_status(ingestion, "/v1/events", event, event_key)
+        if status == 202:
+            break
+        assert status == 503, accepted
+        time.sleep(1)
+    else:
+        raise AssertionError("Redis quota admission did not recover")
+    assert wait_delivery(accepted["data"]["event_id"]) == "SUCCEEDED"
+    print("G2 token reuse, endpoint isolation, and Redis admission recovery passed")
 
 
 if __name__ == "__main__":

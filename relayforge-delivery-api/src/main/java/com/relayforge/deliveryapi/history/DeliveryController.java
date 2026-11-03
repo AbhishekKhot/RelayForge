@@ -67,7 +67,8 @@ public final class DeliveryController {
             HttpServletRequest request) {
         var actor = authenticator.authenticateReplay(authorization);
         var result = replays.replay(actor.organizationId(), actor.keyId(), deliveryId, key,
-                body == null ? null : body.reason(), RequestIdFilter.current(request));
+                body == null ? null : body.reason(), RequestIdFilter.current(request),
+                actor.maxReplayGenerations());
         return ResponseEntity.accepted().body(Map.of("data", result,
                 "request_id", RequestIdFilter.current(request)));
     }

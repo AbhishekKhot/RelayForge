@@ -27,24 +27,30 @@ public final class DeliveryReplayService {
         this.clock = Objects.requireNonNull(clock);
     }
 
-    public ReplayResult replay(UUID organization, UUID actorKeyId, UUID sourceId, String key,
+    ReplayResult replay(UUID organization, UUID actorKeyId, UUID sourceId, String key,
             String reason, String requestId) {
+        return replay(organization, actorKeyId, sourceId, key, reason, requestId, 100);
+    }
+
+    public ReplayResult replay(UUID organization, UUID actorKeyId, UUID sourceId, String key,
+            String reason, String requestId, int maximumGeneration) {
         if (organization == null || actorKeyId == null || sourceId == null || key == null || key.isBlank()
                 || key.length() > 255 || !key.equals(key.trim()) || key.chars().anyMatch(Character::isISOControl)
-                || reason != null && (reason.isBlank() || reason.length() > 500)) {
+                || reason != null && (reason.isBlank() || reason.length() > 500)
+                || maximumGeneration < 1 || maximumGeneration > 100) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
         }
         byte[] hash = hash(reason);
         try {
             return transactions.execute(status -> create(organization, actorKeyId,
-                    sourceId, key, hash, reason, requestId));
+                    sourceId, key, hash, reason, requestId, maximumGeneration));
         } catch (DataAccessException unavailable) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE);
         }
     }
 
     private ReplayResult create(UUID organization, UUID actorKeyId, UUID sourceId, String key, byte[] hash,
-            String reason, String requestId) {
+            String reason, String requestId, int maximumGeneration) {
         List<Source> sources = jdbc.query("""
                 SELECT delivery.accepted_day, delivery.event_id, delivery.endpoint_id,
                     delivery.subscription_id, delivery.status, progress.event_accepted_at
@@ -100,6 +106,9 @@ public final class DeliveryReplayService {
                 SELECT coalesce(max(generation), 0) + 1 FROM deliveries
                 WHERE accepted_day = ? AND organization_id = ? AND event_id = ? AND endpoint_id = ?
                 """, Integer.class, source.day(), organization, source.event(), source.endpoint());
+        if (generation > maximumGeneration) {
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS);
+        }
         UUID replayId = UUID.randomUUID();
         jdbc.update("""
                 INSERT INTO deliveries (accepted_day, id, organization_id, event_id, endpoint_id,

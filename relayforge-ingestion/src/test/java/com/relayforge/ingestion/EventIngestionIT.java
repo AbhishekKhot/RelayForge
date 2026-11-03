@@ -53,9 +53,12 @@ class EventIngestionIT {
                         || "Bearer limited-key".equals(authorization);
                 UUID owner = "Bearer expiry-key".equals(authorization) ? EXPIRY_ORGANIZATION
                         : "Bearer limited-key".equals(authorization) ? LIMITED_ORGANIZATION : ORGANIZATION;
+                int rate = owner.equals(LIMITED_ORGANIZATION) ? 1 : 1200;
                 byte[] body = (accepted ? "{\"organization_id\":\"" + owner
-                        + "\",\"events_per_minute\":"
-                        + (owner.equals(LIMITED_ORGANIZATION) ? 1 : 1200) + "}" : "{}").getBytes();
+                        + "\",\"events_per_minute\":" + rate
+                        + ",\"quotas\":{\"events_per_minute\":" + rate
+                        + ",\"burst_events\":" + (rate == 1 ? 1 : 20)
+                        + ",\"max_event_payload_bytes\":262144}}" : "{}").getBytes();
                 exchange.sendResponseHeaders(accepted ? 200 : 401, body.length);
                 exchange.getResponseBody().write(body);
                 exchange.close();

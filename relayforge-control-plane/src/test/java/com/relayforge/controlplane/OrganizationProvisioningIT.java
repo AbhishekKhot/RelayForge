@@ -271,6 +271,27 @@ class OrganizationProvisioningIT {
     }
 
     @Test
+    void updatesQuotaRevisionAndAuthCheckReturnsNewLimits() {
+        ResponseEntity<JsonNode> created = post("/v1/organizations", PROVISIONING_CREDENTIAL,
+                Map.of("name", "Quota Revision"));
+        String id = created.getBody().path("data").path("organization_id").asText();
+        String key = created.getBody().path("data").path("api_key").asText();
+        assertThat(get("/v1/auth/check", key).getBody().path("quotas")
+                .path("burst_events").asInt()).isEqualTo(20);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("X-Provisioning-Credential", PROVISIONING_CREDENTIAL);
+        ResponseEntity<JsonNode> updated = client.exchange("/v1/organizations/" + id + "/quotas",
+                HttpMethod.PUT, new HttpEntity<>(Map.of("quota_overrides",
+                        Map.of("burst_events", 7, "max_active_endpoints", 2)), headers), JsonNode.class);
+        assertThat(updated.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(get("/v1/auth/check", key).getBody().path("quotas")
+                .path("burst_events").asInt()).isEqualTo(7);
+        assertThat(get("/v1/auth/check", key).getBody().path("quotas")
+                .path("max_active_endpoints").asInt()).isEqualTo(2);
+    }
+
+    @Test
     void duplicateProvisioningRequestIsRecoverableWithoutReturningSecretAgain() {
         String idempotencyKey = UUID.randomUUID().toString();
         ResponseEntity<JsonNode> created = postOrganization(idempotencyKey, Map.of("name", "Recoverable"));

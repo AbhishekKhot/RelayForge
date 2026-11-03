@@ -17,14 +17,20 @@ public final class DeliveryClaimService {
     }
 
     public Optional<Lease> claim(UUID deliveryId, String workerId, int endpointLimit, int platformLimit) {
+        return claim(deliveryId, workerId, endpointLimit, 20000, platformLimit);
+    }
+
+    public Optional<Lease> claim(UUID deliveryId, String workerId, int endpointLimit,
+            int organizationLimit, int platformLimit) {
         if (deliveryId == null || workerId == null
                 || !workerId.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,159}")
                 || endpointLimit < 1 || endpointLimit > 1000
+                || organizationLimit < 1 || organizationLimit > 20000
                 || platformLimit < 1 || platformLimit > 10000) {
             throw new IllegalArgumentException("Invalid delivery claim");
         }
         return transactions.execute(status -> repository.claim(deliveryId, workerId,
-                endpointLimit, platformLimit));
+                endpointLimit, organizationLimit, platformLimit));
     }
 
     public Optional<Lease> renew(Lease lease) {

@@ -44,8 +44,13 @@ public final class ApiExceptionHandler {
         if (status == null) {
             status = HttpStatus.INTERNAL_SERVER_ERROR;
         }
-        String code = status.is4xxClientError() ? "BAD_REQUEST" : "INTERNAL_ERROR";
-        String message = status.is4xxClientError() ? "Request could not be processed" : "An unexpected error occurred";
+        String code = status == HttpStatus.TOO_MANY_REQUESTS ? "QUOTA_EXCEEDED"
+                : status == HttpStatus.PAYLOAD_TOO_LARGE ? "PAYLOAD_TOO_LARGE"
+                : status.is4xxClientError() ? "BAD_REQUEST" : "INTERNAL_ERROR";
+        String message = status == HttpStatus.TOO_MANY_REQUESTS ? "Quota exceeded"
+                : status == HttpStatus.PAYLOAD_TOO_LARGE ? "Payload too large"
+                : status.is4xxClientError() ? "Request could not be processed"
+                : "An unexpected error occurred";
         return ResponseEntity.status(status).body(new ApiError(code, message, RequestIdFilter.current(request)));
     }
 

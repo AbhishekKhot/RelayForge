@@ -8,6 +8,7 @@ import com.relayforge.ingestion.event.EventQueryService;
 import com.relayforge.ingestion.event.RoutingEventLookupService;
 import com.relayforge.ingestion.event.DeliveryPayloadLookupService;
 import com.relayforge.ingestion.event.EventIngestionService;
+import com.relayforge.ingestion.event.EventTokenBucket;
 import com.relayforge.ingestion.event.EventRequestParser;
 import com.relayforge.ingestion.event.IngestionRepository;
 import com.relayforge.ingestion.event.JdbcIngestionRepository;
@@ -91,8 +92,9 @@ public class IngestionDataConfiguration {
 
     @Bean
     EventIngestionService eventIngestionService(IngestionRepository repository, DurabilityGate durability,
-            TransactionTemplate ingestionTransactionTemplate, ObjectMapper json, Environment environment) {
-        return new EventIngestionService(repository, durability, ingestionTransactionTemplate, json,
+            TransactionTemplate ingestionTransactionTemplate, ObjectMapper json, Environment environment,
+            EventTokenBucket bucket) {
+        return new EventIngestionService(repository, durability, ingestionTransactionTemplate, json, bucket,
                 environment.getProperty("relayforge.ingestion.map-epoch", Long.class, 1L),
                 environment.getProperty("relayforge.ingestion.shard-id", "ing-a"),
                 environment.getProperty("relayforge.ingestion.delivery-shard-id", "dlv-a"));

@@ -55,7 +55,8 @@ public final class DeliveryEndpointService {
             Configuration configuration = new Configuration(organizationId, endpointId, stored.version(),
                     stored.authVersion(), stored.credentialVersion(),
                     stored.baseUrl(), stored.path(), query, headers, stored.timeoutMs(),
-                    stored.maxAttempts(), stored.maxConcurrency(), authentication, signing);
+                    stored.maxAttempts(), stored.maxConcurrency(), stored.organizationConcurrencyLimit(),
+                    authentication, signing);
             if (json.writeValueAsBytes(configuration).length > 65536) {
                 throw new IllegalStateException("Endpoint configuration is too large");
             }
@@ -87,6 +88,7 @@ public final class DeliveryEndpointService {
             @JsonProperty("timeout_ms") int timeoutMs,
             @JsonProperty("max_attempts") int maxAttempts,
             @JsonProperty("max_concurrency") int maxConcurrency,
+            @JsonProperty("organization_concurrency_limit") int organizationConcurrencyLimit,
             JsonNode authentication, @JsonProperty("signing_secret") String signingSecret) {
         @Override
         public String toString() {

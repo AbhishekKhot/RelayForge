@@ -23,6 +23,20 @@ public final class JdbcEndpointRepository implements EndpointRepository {
     }
 
     @Override
+    public boolean hasActiveEndpointCapacity(UUID organizationId) {
+        List<Integer> limits = jdbc.query("SELECT coalesce((quota_config->>'max_active_endpoints')::integer, "
+                        + "CASE plan_code WHEN 'STANDARD' THEN 100 ELSE 25 END) "
+                        + "FROM organizations WHERE id = ? AND status = 'ACTIVE' FOR UPDATE",
+                (row, index) -> row.getInt(1), organizationId);
+        if (limits.size() != 1 || limits.getFirst() < 1 || limits.getFirst() > 1000) {
+            return false;
+        }
+        Integer active = jdbc.queryForObject("SELECT count(*) FROM endpoints "
+                + "WHERE organization_id = ? AND status = 'ACTIVE'", Integer.class, organizationId);
+        return active != null && active < limits.getFirst();
+    }
+
+    @Override
     public void insert(UUID id, UUID organizationId, String name, String baseUrl, String path,
             String queryJson, String headersJson, String metadataJson,
             int timeoutMs, int maxConcurrency, int maxAttempts, Instant createdAt,
