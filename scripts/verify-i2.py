@@ -169,8 +169,10 @@ def main():
     assert status in {403, 404} and canary not in json.dumps(replay), (status, replay)
 
     now = datetime.now(timezone.utc)
-    window = urlencode({"from": (now - timedelta(days=1)).isoformat().replace("+00:00", "Z"),
-                        "to": (now + timedelta(minutes=1)).isoformat().replace("+00:00", "Z")})
+    window = urlencode({"from": (now - timedelta(days=1)).isoformat(
+        timespec="milliseconds").replace("+00:00", "Z"),
+        "to": (now + timedelta(minutes=1)).isoformat(
+            timespec="milliseconds").replace("+00:00", "Z")})
     for bearer in (owner, other):
         for endpoint in ("/v1/analytics/overview?", "/v1/analytics/deliveries/timeseries?"
                          "interval=hour&"):
