@@ -16,8 +16,11 @@ import org.springframework.http.HttpStatus;
 import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class EventIngestionService {
+    private static final Logger LOG = LoggerFactory.getLogger(EventIngestionService.class);
     private final IngestionRepository repository;
     private final DurabilityGate durability;
     private final TransactionTemplate transactions;
@@ -49,7 +52,7 @@ public final class EventIngestionService {
         }
         try {
             durability.verify();
-            return transactions.execute(status -> {
+            AcceptedEvent accepted = transactions.execute(status -> {
                 durability.verify();
                 if (!repository.activeFence(bucket, mapEpoch)) {
                     throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE);
@@ -73,6 +76,8 @@ public final class EventIngestionService {
                 writeNew(organization, key, bucket, payload, eventId, locator, day, acceptedAt);
                 return new AcceptedEvent(locator, payload.eventType(), acceptedAt);
             });
+            LOG.info("Event accepted organizationId={} eventId={}", organization.id(), accepted.id());
+            return accepted;
         } catch (DataAccessException | TransactionException unavailable) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE);
         }

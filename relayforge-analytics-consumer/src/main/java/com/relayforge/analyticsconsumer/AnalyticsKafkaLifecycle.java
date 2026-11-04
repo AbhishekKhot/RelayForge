@@ -5,7 +5,9 @@ import com.relayforge.consumer.KafkaConsumerSettings;
 import com.relayforge.contracts.EnvelopeValidator;
 import com.relayforge.contracts.InvalidEnvelopeException;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Gauge;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -13,6 +15,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -38,6 +41,8 @@ public final class AnalyticsKafkaLifecycle implements SmartLifecycle, ReadinessP
     private final ClickHouseFactStore store;
     private final MeterRegistry metrics;
     private final AtomicBoolean running = new AtomicBoolean();
+    private final AtomicLong latestFactEpochSeconds = new AtomicLong();
+    private final AtomicLong maximumKafkaLag = new AtomicLong();
     private Thread thread;
     private int consecutiveFailures;
 
@@ -55,6 +60,14 @@ public final class AnalyticsKafkaLifecycle implements SmartLifecycle, ReadinessP
         this.validator = validator;
         this.store = store;
         this.metrics = metrics;
+        Gauge.builder("relayforge.analytics.ingest.lag.seconds", latestFactEpochSeconds,
+                value -> value.get() == 0 ? -1 : Math.max(0, Instant.now().getEpochSecond() - value.get()))
+                .register(metrics);
+        Gauge.builder("relayforge.kafka.consumer.lag.max", maximumKafkaLag, AtomicLong::get)
+                .tag("group", "analytics-consumer").register(metrics);
+        metrics.timer("relayforge.clickhouse.insert.duration");
+        metrics.counter("relayforge.clickhouse.insert", "result", "success");
+        metrics.counter("relayforge.clickhouse.insert", "result", "error");
         consumer.subscribe(List.of(TOPIC));
     }
 
@@ -81,16 +94,39 @@ public final class AnalyticsKafkaLifecycle implements SmartLifecycle, ReadinessP
     }
 
     void runOnce() {
-        for (ConsumerRecord<String, String> record : consumer.poll(Duration.ofMillis(100))) {
+        var records = consumer.poll(Duration.ofMillis(100));
+        maximumKafkaLag.set(consumer.metrics().entrySet().stream()
+                .filter(entry -> entry.getKey().name().equals("records-lag-max")
+                        && entry.getKey().group().equals("consumer-fetch-manager-metrics")
+                        && !entry.getKey().tags().containsKey("topic"))
+                .mapToLong(entry -> Math.max(0, Math.round(
+                        ((Number) entry.getValue().metricValue()).doubleValue())))
+                .max().orElse(0));
+        for (ConsumerRecord<String, String> record : records) {
             TopicPartition partition = new TopicPartition(record.topic(), record.partition());
             try {
                 var envelope = validator.validate(record.topic(), record.key(), record.value());
                 AnalyticsFact fact = AnalyticsFact.parse(envelope);
-                boolean inserted = store.insert(fact);
+                long started = System.nanoTime();
+                boolean inserted;
+                try {
+                    inserted = store.insert(fact);
+                    metrics.counter("relayforge.clickhouse.insert", "result", "success").increment();
+                } catch (Exception unavailable) {
+                    metrics.counter("relayforge.clickhouse.insert", "result", "error").increment();
+                    throw unavailable;
+                } finally {
+                    metrics.timer("relayforge.clickhouse.insert.duration").record(
+                            Math.max(0, System.nanoTime() - started), TimeUnit.NANOSECONDS);
+                }
+                latestFactEpochSeconds.accumulateAndGet(fact.occurredAt().getEpochSecond(), Math::max);
                 consumer.commitSync(Map.of(partition, new OffsetAndMetadata(record.offset() + 1)),
                         Duration.ofSeconds(3));
                 metrics.counter("relayforge.analytics.facts", "result",
                         inserted ? "inserted" : "duplicate").increment();
+                LOG.info("Analytics fact stored organizationId={} eventId={} deliveryId={} factId={} "
+                                + "result={}", fact.organizationId(), fact.eventId(), fact.deliveryId(),
+                        fact.factId(), inserted ? "inserted" : "duplicate");
                 consecutiveFailures = 0;
             } catch (InvalidEnvelopeException | IllegalArgumentException invalid) {
                 try {

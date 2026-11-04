@@ -1,5 +1,6 @@
 package com.relayforge.ingestion.event;
 
+import com.relayforge.apisupport.ReadinessProbe;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.SocketOptions;
 import java.net.URI;
@@ -13,6 +14,7 @@ import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.RedisCallback;
 
 @Configuration(proxyBeanMethods = false)
 public class IngestionQuotaConfiguration {
@@ -48,6 +50,13 @@ public class IngestionQuotaConfiguration {
     @ConditionalOnProperty(name = "relayforge.redis.uri")
     EventTokenBucket redisEventTokenBucket(StringRedisTemplate ingestionQuotaRedisTemplate) {
         return new RedisEventTokenBucket(ingestionQuotaRedisTemplate);
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "relayforge.redis.uri")
+    ReadinessProbe ingestionQuotaRedisReadinessProbe(StringRedisTemplate ingestionQuotaRedisTemplate) {
+        return () -> Boolean.TRUE.equals(ingestionQuotaRedisTemplate.execute(
+                (RedisCallback<Boolean>) connection -> "PONG".equals(connection.ping())));
     }
 
     @Bean

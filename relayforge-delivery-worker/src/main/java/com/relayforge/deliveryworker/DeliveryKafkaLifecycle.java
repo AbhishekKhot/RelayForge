@@ -6,6 +6,7 @@ import com.relayforge.consumer.ConsumerOptions;
 import com.relayforge.consumer.KafkaConsumerSettings;
 import com.relayforge.consumer.ResilientKafkaConsumer;
 import com.relayforge.contracts.EnvelopeValidator;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
 import java.util.List;
 import java.util.Properties;
@@ -25,7 +26,7 @@ public final class DeliveryKafkaLifecycle implements SmartLifecycle, ReadinessPr
     private Thread thread;
 
     public DeliveryKafkaLifecycle(String bootstrapServers, ObjectMapper json,
-            DeliveryProcessor processor) {
+            DeliveryProcessor processor, MeterRegistry registry) {
         Properties settings = KafkaConsumerSettings.properties(bootstrapServers,
                 "relayforge-delivery-worker", 32, 32, Duration.ofMinutes(5),
                 Duration.ofMillis(100), Duration.ofSeconds(2));
@@ -52,7 +53,8 @@ public final class DeliveryKafkaLifecycle implements SmartLifecycle, ReadinessPr
                     }
                     processor.process(deliveryId);
                 }, new ConsumerOptions(8, 32, 3, Duration.ofMillis(200),
-                Duration.ofMillis(100), Duration.ofSeconds(2), Duration.ofSeconds(5)), List.of(TOPIC));
+                Duration.ofMillis(100), Duration.ofSeconds(2), Duration.ofSeconds(5)), List.of(TOPIC),
+                registry, "delivery-worker");
     }
 
     @Override

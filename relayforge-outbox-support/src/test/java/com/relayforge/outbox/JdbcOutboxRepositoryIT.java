@@ -1,5 +1,6 @@
 package com.relayforge.outbox;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.sql.DriverManager;
 import java.time.Duration;
 import java.util.List;
@@ -50,6 +51,28 @@ class JdbcOutboxRepositoryIT {
                     )
                     """.formatted(owner, aggregateColumn));
         }
+    }
+
+    @Test
+    void reportsPendingAgeAndExpiredClaimsForTheOwner() {
+        UUID pending = insertControl("pending-metric");
+        UUID expired = insertControl("expired-metric");
+        jdbc.update("UPDATE control_outbox SET created_at = clock_timestamp() - interval '70 seconds' "
+                + "WHERE id = ?", pending);
+        jdbc.update("UPDATE control_outbox SET status = 'IN_FLIGHT', claim_expires_at = "
+                + "clock_timestamp() - interval '1 second' WHERE id = ?", expired);
+        var registry = new SimpleMeterRegistry();
+        var metrics = new OutboxMetrics(jdbc, JdbcOutboxRepository.Owner.CONTROL, registry);
+        metrics.refresh();
+        assertThat(registry.get("relayforge.outbox.pending").tag("owner", "control")
+                .gauge().value()).isEqualTo(2);
+        assertThat(registry.get("relayforge.outbox.oldest.age.seconds").tag("owner", "control")
+                .gauge().value()).isGreaterThanOrEqualTo(69);
+        assertThat(registry.get("relayforge.outbox.expired.claims").tag("owner", "control")
+                .gauge().value()).isEqualTo(1);
+        metrics.published(2);
+        assertThat(registry.get("relayforge.outbox.publish").tags("owner", "control",
+                "result", "published").counter().count()).isEqualTo(2);
     }
 
     @Test

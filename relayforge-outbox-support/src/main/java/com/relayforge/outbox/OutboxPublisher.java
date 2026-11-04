@@ -3,8 +3,11 @@ package com.relayforge.outbox;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.random.RandomGenerator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class OutboxPublisher {
+    private static final Logger LOG = LoggerFactory.getLogger(OutboxPublisher.class);
     private static final long MAX_RETRY_MILLIS = 60000;
     private final OutboxRepository repository;
     private final OutboxTransport transport;
@@ -52,6 +55,9 @@ public final class OutboxPublisher {
             }
             if (repository.markPublished(row.id(), row.claimToken())) {
                 published++;
+                LOG.info("Outbox message published organizationId={} eventId={} outboxId={} "
+                                + "topic={} workerName={}", row.organizationId(), row.aggregateId(),
+                        row.id(), row.topic(), workerId);
             }
         }
         return published;

@@ -2,6 +2,8 @@ package com.relayforge.consumer;
 
 import com.relayforge.contracts.EnvelopeValidator;
 import com.relayforge.contracts.InvalidEnvelopeException;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -21,6 +23,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -45,6 +48,8 @@ public final class ResilientKafkaConsumer implements AutoCloseable {
     private final Map<TopicPartition, Long> epochs = new HashMap<>();
     private final AtomicBoolean running = new AtomicBoolean(true);
     private final AtomicBoolean runLoopActive = new AtomicBoolean();
+    private final AtomicLong maximumLag = new AtomicLong();
+    private final boolean observeLag;
     private int inFlight;
     private boolean stopped;
 
@@ -52,6 +57,14 @@ public final class ResilientKafkaConsumer implements AutoCloseable {
                                   Producer<String, String> quarantineProducer,
                                   EnvelopeValidator validator, MessageHandler handler,
                                   ConsumerOptions options, Collection<String> topics) {
+        this(consumer, quarantineProducer, validator, handler, options, topics, null, null);
+    }
+
+    public ResilientKafkaConsumer(Consumer<String, String> consumer,
+                                  Producer<String, String> quarantineProducer,
+                                  EnvelopeValidator validator, MessageHandler handler,
+                                  ConsumerOptions options, Collection<String> topics,
+                                  MeterRegistry registry, String group) {
         this.consumer = Objects.requireNonNull(consumer);
         this.quarantineProducer = Objects.requireNonNull(quarantineProducer);
         this.validator = Objects.requireNonNull(validator);
@@ -61,6 +74,11 @@ public final class ResilientKafkaConsumer implements AutoCloseable {
             throw new IllegalArgumentException("At least one topic is required");
         }
         this.workers = Executors.newFixedThreadPool(options.workers());
+        this.observeLag = registry != null;
+        if (registry != null) {
+            Gauge.builder("relayforge.kafka.consumer.lag.max", maximumLag, AtomicLong::get)
+                    .tag("group", Objects.requireNonNull(group)).register(registry);
+        }
         consumer.subscribe(topics, new Rebalance());
     }
 
@@ -74,6 +92,15 @@ public final class ResilientKafkaConsumer implements AutoCloseable {
         commitCompleted();
         adjustPause();
         ConsumerRecords<String, String> records = consumer.poll(options.pollTimeout());
+        if (observeLag) {
+            maximumLag.set(consumer.metrics().entrySet().stream()
+                    .filter(entry -> entry.getKey().name().equals("records-lag-max")
+                            && entry.getKey().group().equals("consumer-fetch-manager-metrics")
+                            && !entry.getKey().tags().containsKey("topic"))
+                    .mapToLong(entry -> Math.max(0, Math.round(
+                            ((Number) entry.getValue().metricValue()).doubleValue())))
+                    .max().orElse(0));
+        }
         for (ConsumerRecord<String, String> record : records) {
             TopicPartition partition = new TopicPartition(record.topic(), record.partition());
             long epoch = epochs.computeIfAbsent(partition, ignored -> 0L);

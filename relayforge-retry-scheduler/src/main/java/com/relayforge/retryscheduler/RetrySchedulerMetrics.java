@@ -10,6 +10,8 @@ import org.springframework.scheduling.annotation.Scheduled;
 public final class RetrySchedulerMetrics {
     private final JdbcTemplate jdbc;
     private final AtomicLong dueBacklog = new AtomicLong();
+    private final AtomicLong deliveryBacklog = new AtomicLong();
+    private final AtomicLong oldestPendingAgeSeconds = new AtomicLong();
     private final AtomicLong oldestDueAgeSeconds = new AtomicLong();
     private final AtomicLong expiredLeases = new AtomicLong();
     private final AtomicLong exhaustedRows = new AtomicLong();
@@ -20,6 +22,10 @@ public final class RetrySchedulerMetrics {
         Objects.requireNonNull(registry);
         Gauge.builder("relayforge.delivery.retry.due.backlog", dueBacklog, AtomicLong::get)
                 .register(registry);
+        Gauge.builder("relayforge.delivery.backlog", deliveryBacklog, AtomicLong::get)
+                .register(registry);
+        Gauge.builder("relayforge.delivery.oldest.pending.age.seconds", oldestPendingAgeSeconds,
+                AtomicLong::get).register(registry);
         Gauge.builder("relayforge.delivery.retry.oldest.due.age.seconds", oldestDueAgeSeconds,
                 AtomicLong::get).register(registry);
         Gauge.builder("relayforge.delivery.lease.expired", expiredLeases, AtomicLong::get)
@@ -32,6 +38,17 @@ public final class RetrySchedulerMetrics {
 
     @Scheduled(fixedDelay = 10000)
     public void refresh() {
+        deliveryBacklog.set(value("""
+                SELECT count(*) FROM delivery_work
+                WHERE status IN ('PENDING', 'ENQUEUED', 'RETRY_SCHEDULED')
+                """));
+        oldestPendingAgeSeconds.set(value("""
+                SELECT COALESCE(GREATEST(0,
+                    EXTRACT(EPOCH FROM (clock_timestamp() - min(delivery.created_at)))::bigint), 0)
+                FROM delivery_work work JOIN deliveries delivery
+                  ON delivery.accepted_day = work.accepted_day AND delivery.id = work.delivery_id
+                WHERE work.status IN ('PENDING', 'ENQUEUED', 'RETRY_SCHEDULED')
+                """));
         dueBacklog.set(value("""
                 SELECT count(*) FROM delivery_work
                 WHERE status = 'RETRY_SCHEDULED' AND next_attempt_at <= clock_timestamp()

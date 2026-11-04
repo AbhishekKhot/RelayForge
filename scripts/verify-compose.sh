@@ -5,7 +5,15 @@ cd "$(dirname "$0")/.."
 
 show_startup_failure() {
     docker compose ps >&2
-    docker compose logs --tail=120 kafka >&2
+    docker compose logs --tail=100 control-plane delivery-api control-publisher \
+        ingestion-publisher retry-scheduler analytics-consumer kafka >&2
+    for service in control-plane delivery-api; do
+        local container
+        container="$(docker compose ps -a -q "$service")"
+        if [[ -n "$container" ]]; then
+            docker inspect --format '{{json .State}}' "$container" >&2
+        fi
+    done
 }
 trap show_startup_failure ERR
 
@@ -68,7 +76,7 @@ for service in "${services[@]}"; do
     wait_healthy "$service"
 done
 docker compose exec -T retry-scheduler java -cp /app HealthProbe \
-    http://127.0.0.1:8080/actuator/metrics/relayforge.delivery.retry.due.backlog
+    http://127.0.0.1:9090/actuator/metrics/relayforge.delivery.retry.due.backlog
 verify_migrations
 python3 scripts/verify-b1.py
 python3 scripts/verify-b2.py

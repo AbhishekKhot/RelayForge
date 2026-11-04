@@ -1,0 +1,50 @@
+groups:
+  - name: relayforge-workflows
+    rules:
+      - alert: RelayForgeOutboxStuck
+        expr: relayforge_outbox_oldest_age_seconds > 300
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "{{ $labels.owner }} outbox has unpublished work older than five minutes"
+          runbook: "Check publisher readiness, PostgreSQL, Kafka, and expired outbox claims. Restart a failed publisher after its dependency recovers."
+      - alert: RelayForgeKafkaConsumerLag
+        expr: relayforge_kafka_consumer_lag_max > 10000
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: "{{ $labels.group }} consumer is more than 10000 records behind"
+          runbook: "Check consumer readiness, broker availability, handler errors, and assigned partitions before changing concurrency."
+      - alert: RelayForgeDueRetryBacklog
+        expr: relayforge_delivery_retry_due_backlog > 1000 and relayforge_delivery_retry_oldest_due_age_seconds > 300
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "Due delivery retries are accumulating"
+          runbook: "Check scheduler and publisher readiness, endpoint error rates, and delivery worker capacity."
+      - alert: RelayForgeRetryExhaustion
+        expr: increase(relayforge_delivery_attempts_total{outcome="dead_lettered"}[10m]) > 20
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 20 deliveries were dead lettered in ten minutes"
+          runbook: "Inspect bounded error codes and endpoint health, then use the authorized replay flow after the cause is fixed."
+      - alert: RelayForgeExpiredLeases
+        expr: relayforge_delivery_lease_expired > 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Delivery lease recovery is falling behind"
+          runbook: "Inspect worker restarts, PostgreSQL contention, lease renewals, and scheduler readiness."
+      - alert: RelayForgeAnalyticsLag
+        expr: relayforge_analytics_ingest_lag_seconds > 600 and on(job, instance) relayforge_kafka_consumer_lag_max{group="analytics-consumer"} > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Analytics facts are more than ten minutes behind"
+          runbook: "Check analytics consumer readiness, Kafka lag, ClickHouse insert failures, and ClickHouse health."

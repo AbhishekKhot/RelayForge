@@ -14,6 +14,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
 
@@ -26,18 +27,26 @@ public final class TokenCacheService {
     private final DoubleSupplier random;
     private final Supplier<UUID> lockOwner;
     private final TokenExchangeService.Sleeper sleeper;
+    private final Consumer<Boolean> cacheResult;
     private final ConcurrentHashMap<TokenCacheKey, CachedToken> local = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<TokenCacheKey, CompletableFuture<AuthMaterial>> flights =
             new ConcurrentHashMap<>();
 
     public TokenCacheService(TokenExchangeService exchange, TokenCacheStore store, Clock clock,
             DoubleSupplier random, Supplier<UUID> lockOwner, TokenExchangeService.Sleeper sleeper) {
+        this(exchange, store, clock, random, lockOwner, sleeper, ignored -> { });
+    }
+
+    public TokenCacheService(TokenExchangeService exchange, TokenCacheStore store, Clock clock,
+            DoubleSupplier random, Supplier<UUID> lockOwner, TokenExchangeService.Sleeper sleeper,
+            Consumer<Boolean> cacheResult) {
         this.exchange = Objects.requireNonNull(exchange);
         this.store = Objects.requireNonNull(store);
         this.clock = Objects.requireNonNull(clock);
         this.random = Objects.requireNonNull(random);
         this.lockOwner = Objects.requireNonNull(lockOwner);
         this.sleeper = Objects.requireNonNull(sleeper);
+        this.cacheResult = Objects.requireNonNull(cacheResult);
     }
 
     public AuthMaterial resolve(JsonNode configuration, DeliveryClaimService.Lease lease,
@@ -66,12 +75,15 @@ public final class TokenCacheService {
         Objects.requireNonNull(key);
         CachedToken cached = local.get(key);
         if (cached != null && cached.usable(key, clock.instant())) {
+            cacheResult.accept(true);
             return cached.material();
         }
         CompletableFuture<AuthMaterial> mine = new CompletableFuture<>();
         CompletableFuture<AuthMaterial> running = flights.putIfAbsent(key, mine);
         if (running != null) {
-            return await(running, leaseValid);
+            AuthMaterial material = await(running, leaseValid);
+            cacheResult.accept(true);
+            return material;
         }
         try {
             AuthMaterial resolved = acquire(configuration, lease, leaseValid, key);
@@ -113,6 +125,7 @@ public final class TokenCacheService {
             Optional<CachedToken> cached = store.get(key);
             if (cached.isPresent() && cached.get().usable(key, clock.instant())) {
                 remember(key, cached.get());
+                cacheResult.accept(true);
                 return cached.get().material();
             }
             locked = store.acquireLock(key, owner, LOCK_TTL);
@@ -127,6 +140,7 @@ public final class TokenCacheService {
                 Optional<CachedToken> cached = store.get(key);
                 if (cached.isPresent() && cached.get().usable(key, clock.instant())) {
                     remember(key, cached.get());
+                    cacheResult.accept(true);
                     return cached.get().material();
                 }
             } catch (RuntimeException unavailable) {
@@ -150,6 +164,7 @@ public final class TokenCacheService {
                 Optional<CachedToken> cached = store.get(key);
                 if (cached.isPresent() && cached.get().usable(key, clock.instant())) {
                     remember(key, cached.get());
+                    cacheResult.accept(true);
                     return cached.get().material();
                 }
                 sleeper.sleep(Duration.ofMillis(50));
@@ -165,6 +180,7 @@ public final class TokenCacheService {
 
     private AuthMaterial fetch(JsonNode configuration, DeliveryClaimService.Lease lease,
             BooleanSupplier leaseValid, TokenCacheKey key, boolean publish) {
+        cacheResult.accept(false);
         TokenExchangeService.AcquiredToken acquired = exchange.acquireToken(configuration, lease, leaseValid);
         CachedToken cached = cacheable(key, acquired);
         if (cached != null) {

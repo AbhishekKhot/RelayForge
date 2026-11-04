@@ -8,13 +8,17 @@ import java.io.IOException;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import org.slf4j.MDC;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.servlet.HandlerMapping;
 
 @Component
 @Order(0)
 public final class RequestIdFilter extends OncePerRequestFilter {
+    private static final Logger LOG = LoggerFactory.getLogger(RequestIdFilter.class);
     public static final String HEADER = "X-Request-Id";
     public static final String ATTRIBUTE = RequestIdFilter.class.getName() + ".id";
     private static final Pattern SAFE_ID = Pattern.compile("[A-Za-z0-9_-]{1,100}");
@@ -31,6 +35,11 @@ public final class RequestIdFilter extends OncePerRequestFilter {
         try {
             chain.doFilter(request, response);
         } finally {
+            Object route = request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
+            if (route instanceof String pattern) {
+                LOG.info("HTTP request completed method={} route={} status={}",
+                        request.getMethod(), pattern, response.getStatus());
+            }
             MDC.remove("requestId");
         }
     }
