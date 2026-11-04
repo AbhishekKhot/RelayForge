@@ -180,7 +180,8 @@ class DeliveryReplayIT {
         UUID delivery = UUID.randomUUID();
         LocalDate day = acceptedAt.atZone(ZoneOffset.UTC).toLocalDate();
         if (day.isBefore(LocalDate.now(ZoneOffset.UTC).minusDays(1))) {
-            for (String table : new String[] {"routing_progress", "deliveries"}) {
+            for (String table : new String[] {"routing_progress", "deliveries",
+                    "replay_requests", "delivery_audit_records"}) {
                 jdbc.execute("CREATE TABLE IF NOT EXISTS " + table + "_" + day.toString().replace("-", "")
                         + " PARTITION OF " + table + " FOR VALUES FROM ('" + day + "') TO ('"
                         + day.plusDays(1) + "')");

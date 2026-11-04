@@ -49,6 +49,7 @@ public final class RetentionService {
                 fullyExpiredThrough));
         int released = 0;
         int blocked = 0;
+        LocalDate oldestBlockedDay = null;
         for (LocalDate day : days) {
             if (day.plusDays(91).atStartOfDay(ZoneOffset.UTC).toInstant().isAfter(now)) {
                 continue;
@@ -57,15 +58,18 @@ public final class RetentionService {
                 released++;
             } else {
                 blocked++;
+                if (oldestBlockedDay == null) {
+                    oldestBlockedDay = day;
+                }
             }
         }
-        return new Report(released, blocked);
+        return new Report(released, blocked, oldestBlockedDay);
     }
 
     private void precreate(DataSource source, long lockKey, List<String> tables, LocalDate today) {
         transaction(source, connection -> {
             if (!lock(connection, lockKey)) {
-                return false;
+                throw new SQLException("Retention partition preparation is already running");
             }
             for (int ahead = 0; ahead <= 14; ahead++) {
                 LocalDate day = today.plusDays(ahead);
@@ -285,6 +289,6 @@ public final class RetentionService {
         boolean run(Connection connection) throws SQLException;
     }
 
-    public record Report(int releasedDays, int blockedDays) {
+    public record Report(int releasedDays, int blockedDays, LocalDate oldestBlockedDay) {
     }
 }

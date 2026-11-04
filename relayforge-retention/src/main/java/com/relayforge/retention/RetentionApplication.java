@@ -20,7 +20,8 @@ public final class RetentionApplication {
         RetentionService.Report report = new RetentionService(ingestion, delivery,
                 Clock.systemUTC()).runOnce();
         System.out.println("Retention days released=" + report.releasedDays()
-                + " blocked=" + report.blockedDays());
+                + " blocked=" + report.blockedDays()
+                + " oldest_blocked_day=" + report.oldestBlockedDay());
         if (report.blockedDays() > 0) {
             System.exit(1);
         }
