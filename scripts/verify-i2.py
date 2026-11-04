@@ -152,8 +152,13 @@ def main():
     assert status == 202, (status, event)
     event_id = event["data"]["event_id"]
     assert get(ingestion, "/v1/events/" + event_id, other)[0] == 404
-    status, owned = get(ingestion, "/v1/events/" + event_id, owner)
-    assert status == 200 and owned["data"]["event_id"] == event_id
+    for _ in range(30):
+        status, owned = get(ingestion, "/v1/events/" + event_id, owner)
+        if status == 200 and owned["data"]["event_id"] == event_id:
+            break
+        time.sleep(1)
+    else:
+        raise AssertionError(("Owner event read did not recover", status, owned))
     delivery_id = None
     for _ in range(75):
         delivery_id = query("SELECT delivery.id FROM deliveries delivery JOIN routing_progress progress "
