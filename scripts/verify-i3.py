@@ -5,8 +5,11 @@ import time
 
 
 def compose(*args, timeout=60):
-    return subprocess.run(["docker", "compose", *args], check=True,
-                          text=True, capture_output=True, timeout=timeout).stdout
+    result = subprocess.run(["docker", "compose", *args],
+                            text=True, capture_output=True, timeout=timeout)
+    if result.returncode:
+        raise AssertionError(f"docker compose {args} failed: {result.stderr}")
+    return result.stdout
 
 
 def probe(service, expected):
@@ -46,6 +49,7 @@ def main():
                                "relayforge.clickhouse.insert"),
         "analytics-api": ("relayforge.analytics.query.duration",),
     }.items():
+        await_probe(service, 200, seconds=120)
         for name in names:
             assert name in metric(service, name), (service, name)
 
