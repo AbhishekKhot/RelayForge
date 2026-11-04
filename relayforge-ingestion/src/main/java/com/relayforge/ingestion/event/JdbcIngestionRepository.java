@@ -134,6 +134,7 @@ public final class JdbcIngestionRepository implements IngestionRepository {
                     AND registry.idempotency_key = event.idempotency_key
                     AND registry.event_id = event.id AND registry.event_locator = ?
                 WHERE event.organization_id = ? AND event.accepted_day = ? AND event.id = ?
+                    AND event.accepted_at + interval '2160 hours' > clock_timestamp()
                 """, (row, index) -> new RoutingEvent(row.getString(1),
                 row.getTimestamp(2).toInstant(), row.getBytes(3)), locator, organizationId, day, eventId)
                 .stream().findFirst();

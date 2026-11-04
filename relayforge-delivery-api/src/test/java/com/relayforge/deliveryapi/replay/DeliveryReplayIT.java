@@ -75,6 +75,22 @@ class DeliveryReplayIT {
     }
 
     @Test
+    void rejectsDuplicateReplayAfterSourceEventExpires() {
+        Source source = source("DEAD_LETTERED", "ACTIVE",
+                NOW.minusSeconds(2160L * 3600 - 60));
+        service.replay(source.organization(), ACTOR, source.delivery(),
+                "expiry-key", "Recovered", "req-before");
+        var dataSource = new DriverManagerDataSource(DATABASE.getJdbcUrl(),
+                DATABASE.getUsername(), DATABASE.getPassword());
+        var afterExpiry = new DeliveryReplayService(jdbc,
+                new TransactionTemplate(new DataSourceTransactionManager(dataSource)),
+                Clock.fixed(NOW.plusSeconds(120), ZoneOffset.UTC));
+
+        assertStatus(HttpStatus.CONFLICT, () -> afterExpiry.replay(source.organization(), ACTOR,
+                source.delivery(), "expiry-key", "Recovered", "req-after"));
+    }
+
+    @Test
     void rejectsChangedBodyAndOtherOrganization() {
         Source source = source("DEAD_LETTERED", "ACTIVE", NOW.minusSeconds(60));
         service.replay(source.organization(), ACTOR, source.delivery(), "same-key", "one", "req");

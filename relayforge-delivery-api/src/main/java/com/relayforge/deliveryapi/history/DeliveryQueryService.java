@@ -28,7 +28,8 @@ public final class DeliveryQueryService {
                 status, endpointId, from, to, limit, cursor, clock);
         List<DeliveryHistoryRepository.DeliveryRow> found;
         try {
-            found = repository.list(organizationId, retentionDay(), page);
+            Instant cutoff = retentionCutoff();
+            found = repository.list(organizationId, retentionDay(cutoff), cutoff, page);
         } catch (DataAccessException unavailable) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE);
         }
@@ -45,7 +46,8 @@ public final class DeliveryQueryService {
             throw new IllegalArgumentException("Invalid delivery lookup");
         }
         try {
-            return repository.find(organizationId, deliveryId, retentionDay()).map(row ->
+            Instant cutoff = retentionCutoff();
+            return repository.find(organizationId, deliveryId, retentionDay(cutoff), cutoff).map(row ->
                     new DetailView(view(row), repository.attempts(organizationId,
                             row.acceptedDay(), deliveryId).stream()
                             .map(DeliveryQueryService::attempt).toList()));
@@ -54,8 +56,12 @@ public final class DeliveryQueryService {
         }
     }
 
-    private LocalDate retentionDay() {
-        return clock.instant().atZone(ZoneOffset.UTC).toLocalDate().minusDays(90);
+    private Instant retentionCutoff() {
+        return clock.instant().minusSeconds(2160L * 3600);
+    }
+
+    private LocalDate retentionDay(Instant cutoff) {
+        return cutoff.atZone(ZoneOffset.UTC).toLocalDate();
     }
 
     private static DeliveryView view(DeliveryHistoryRepository.DeliveryRow row) {

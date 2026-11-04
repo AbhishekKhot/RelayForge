@@ -371,6 +371,24 @@ services:
       clickhouse: { condition: service_healthy }
       control-plane: { condition: service_healthy }
 
+  retention:
+    image: relayforge/retention:local
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.service
+      args: { MODULE: relayforge-retention }
+    profiles: [maintenance]
+    restart: "no"
+    environment:
+      INGESTION_JDBC_URL: ${INGESTION_JDBC_URL:?Set INGESTION_JDBC_URL in .env}
+      INGESTION_DB_USER: ${INGESTION_DB_USER:?Set INGESTION_DB_USER in .env}
+      INGESTION_DB_PASSWORD: ${INGESTION_DB_PASSWORD:?Set INGESTION_DB_PASSWORD in .env}
+      DELIVERY_JDBC_URL: ${DELIVERY_JDBC_URL:?Set DELIVERY_JDBC_URL in .env}
+      DELIVERY_DB_USER: ${DELIVERY_DB_USER:?Set DELIVERY_DB_USER in .env}
+      DELIVERY_DB_PASSWORD: ${DELIVERY_DB_PASSWORD:?Set DELIVERY_DB_PASSWORD in .env}
+    depends_on:
+      postgres: { condition: service_healthy }
+
   test-control-plane:
     <<: *test
     command: ["-fsS", "http://control-plane:8080/health/ready"]

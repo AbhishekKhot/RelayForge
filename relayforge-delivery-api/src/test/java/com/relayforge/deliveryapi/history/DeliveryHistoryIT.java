@@ -78,6 +78,36 @@ class DeliveryHistoryIT {
         assertThat(service.detail(other, third)).isEmpty();
     }
 
+    @Test
+    void hidesExpiredAcceptanceCohortDuringPhysicalGrace() {
+        Instant acceptedAt = NOW.minusSeconds(2160L * 3600 + 1);
+        LocalDate day = acceptedAt.atZone(ZoneOffset.UTC).toLocalDate();
+        for (String parent : new String[]{"routing_progress", "deliveries"}) {
+            jdbc.execute("CREATE TABLE IF NOT EXISTS " + parent + "_"
+                    + day.format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE)
+                    + " PARTITION OF " + parent + " FOR VALUES FROM ('" + day
+                    + "') TO ('" + day.plusDays(1) + "')");
+        }
+        UUID owner = UUID.randomUUID();
+        UUID event = UUID.randomUUID();
+        UUID deliveryId = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO routing_progress (accepted_day, event_id, organization_id,
+                    event_accepted_at, ingestion_shard_id, delivery_shard_id, status)
+                VALUES (?, ?, ?, ?, 'ing-a', 'dlv-a', 'ROUTED')
+                """, day, event, owner, Timestamp.from(acceptedAt));
+        jdbc.update("""
+                INSERT INTO deliveries (accepted_day, id, organization_id, event_id, endpoint_id,
+                    status, created_at)
+                VALUES (?, ?, ?, ?, ?, 'SUCCEEDED', ?)
+                """, day, deliveryId, owner, event, UUID.randomUUID(), Timestamp.from(NOW));
+
+        assertThat(service.detail(owner, deliveryId)).isEmpty();
+        assertThat(service.list(owner, "SUCCEEDED", null,
+                NOW.minusSeconds(3600).toString(), NOW.plusSeconds(1).toString(), "10", null)
+                .data()).isEmpty();
+    }
+
     private static void insert(UUID organization, UUID endpoint, UUID delivery,
             Instant createdAt, String status) {
         UUID event = UUID.randomUUID();

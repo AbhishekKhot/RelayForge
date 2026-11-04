@@ -78,6 +78,7 @@ done
 docker compose exec -T retry-scheduler java -cp /app HealthProbe \
     http://127.0.0.1:9090/actuator/metrics/relayforge.delivery.retry.due.backlog
 verify_migrations
+docker compose --profile maintenance run --build --rm retention
 python3 scripts/verify-b1.py
 python3 scripts/verify-b2.py
 python3 scripts/verify-b3.py
