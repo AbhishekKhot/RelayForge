@@ -90,7 +90,7 @@ def main():
         "response": {"status": 400, "body": canary},
     }, {})
     assert status == 201
-    status, created = post(control, "/v1/endpoints", {
+    endpoint_request = {
         "name": "I2 canary endpoint",
         "destination": {"base_url": env["WEBHOOK_SIMULATOR_URL"], "path": path,
                         "query_params": {}, "headers": {}, "metadata": {}},
@@ -99,8 +99,13 @@ def main():
         "event_types": [event_type],
         "delivery_policy": {"timeout_ms": 3000, "max_attempts": 1,
                             "max_concurrency": 1},
-    }, owner)
+    }
+    status, created = post(control, "/v1/endpoints", endpoint_request, owner)
     assert status == 201, (status, created)
+    blocked = {**endpoint_request, "destination": {
+        **endpoint_request["destination"], "base_url": "https://169.254.169.254"}}
+    status, rejected = post_status(control, "/v1/endpoints", blocked, owner)
+    assert status == 422 and canary not in json.dumps(rejected), (status, rejected)
     endpoint_id = created["data"]["endpoint_id"]
     signing_secret = created["data"]["signing_secret"]
     assert canary not in json.dumps(created)
