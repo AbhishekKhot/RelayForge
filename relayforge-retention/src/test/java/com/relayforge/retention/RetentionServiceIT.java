@@ -161,6 +161,41 @@ class RetentionServiceIT {
         assertThat(partitionExists(deliverSql, "deliveries", boundary)).isTrue();
     }
 
+    @Test
+    void waitsForRoutingAfterIngestionOutboxPublication() {
+        LocalDate day = LocalDate.parse("2026-07-31");
+        createOldPartitions(day);
+        UUID organization = UUID.randomUUID();
+        UUID event = UUID.randomUUID();
+        Instant accepted = day.atTime(12, 0).toInstant(ZoneOffset.UTC);
+        ingestSql.update("""
+                INSERT INTO events (accepted_day, id, organization_id, event_type, payload,
+                    payload_hash, idempotency_key, accepted_at)
+                VALUES (?, ?, ?, 'order.created', '{}'::jsonb,
+                    decode(repeat('aa', 32), 'hex'), 'routing-lag', ?)
+                """, day, event, organization, Timestamp.from(accepted));
+        ingestSql.update("""
+                INSERT INTO ingestion_outbox (organization_id, accepted_day, event_id,
+                    message_type, topic, partition_key, payload, status, published_at)
+                VALUES (?, ?, ?, 'event.accepted.v1', 'relayforge.event.accepted.v1',
+                    'routing-lag', '{}'::jsonb, 'PUBLISHED', ?)
+                """, organization, day, event, Timestamp.from(NOW));
+        var retention = new RetentionService(ingestion, delivery,
+                Clock.fixed(NOW, ZoneOffset.UTC));
+
+        assertThat(retention.runOnce().blockedDays()).isGreaterThan(0);
+        assertThat(partitionExists(deliverSql, "routing_progress", day)).isTrue();
+
+        deliverSql.update("""
+                INSERT INTO routing_progress (accepted_day, event_id, organization_id,
+                    event_accepted_at, ingestion_shard_id, delivery_shard_id, status)
+                VALUES (?, ?, ?, ?, 'ing-a', 'dlv-a', 'NO_SUBSCRIBERS')
+                """, day, event, organization, Timestamp.from(accepted));
+        retention.runOnce();
+        assertThat(partitionExists(deliverSql, "routing_progress", day)).isFalse();
+        assertThat(partitionExists(ingestSql, "events", day)).isFalse();
+    }
+
     private static DataSource source(String database) {
         String url = POSTGRES.getJdbcUrl().replace("/relayforge_ingestion", "/" + database);
         return new DriverManagerDataSource(url, POSTGRES.getUsername(), POSTGRES.getPassword());
