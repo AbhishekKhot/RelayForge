@@ -5,7 +5,15 @@ cd "$(dirname "$0")/.."
 
 show_startup_failure() {
     docker compose ps >&2
-    docker compose logs --tail=120 kafka >&2
+    docker compose logs --tail=100 control-plane delivery-api control-publisher \
+        ingestion-publisher retry-scheduler analytics-consumer kafka >&2
+    for service in control-plane delivery-api; do
+        local container
+        container="$(docker compose ps -a -q "$service")"
+        if [[ -n "$container" ]]; then
+            docker inspect --format '{{json .State}}' "$container" >&2
+        fi
+    done
 }
 trap show_startup_failure ERR
 
