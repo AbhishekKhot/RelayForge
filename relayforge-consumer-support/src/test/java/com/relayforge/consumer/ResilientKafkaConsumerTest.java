@@ -3,12 +3,14 @@ package com.relayforge.consumer;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.relayforge.contracts.EnvelopeValidator;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -26,6 +28,8 @@ import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.Metric;
+import org.apache.kafka.common.MetricName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -33,6 +37,28 @@ class ResilientKafkaConsumerTest {
     private static final String TOPIC = "relayforge.delivery.ready.v1";
     private static final TopicPartition PARTITION = new TopicPartition(TOPIC, 0);
     private static final Duration WAIT = Duration.ofSeconds(2);
+
+    @Test
+    void exposesKafkaMaximumLagWithoutTopicOrPartitionLabels() {
+        Consumer<String, String> consumer = mockConsumer(ConsumerRecords.empty());
+        Metric kafkaMetric = mock(Metric.class);
+        when(kafkaMetric.metricValue()).thenReturn(17.0);
+        var name = new MetricName("records-lag-max", "consumer-fetch-manager-metrics",
+                "maximum lag", Map.of("client-id", "test"));
+        doReturn(Map.of(name, kafkaMetric)).when(consumer).metrics();
+        var registry = new SimpleMeterRegistry();
+        var loop = new ResilientKafkaConsumer(consumer, mockProducer(),
+                new EnvelopeValidator(new ObjectMapper()), ignored -> { },
+                new ConsumerOptions(1, 1, 2, Duration.ZERO, Duration.ofMillis(1), WAIT, WAIT),
+                List.of(TOPIC), registry, "delivery-worker");
+        try {
+            loop.runOnce();
+            assertThat(registry.get("relayforge.kafka.consumer.lag.max")
+                    .tag("group", "delivery-worker").gauge().value()).isEqualTo(17);
+        } finally {
+            loop.close();
+        }
+    }
 
     @Test
     void waitsForEarlierWorkBeforeCommittingLaterOffset() throws Exception {

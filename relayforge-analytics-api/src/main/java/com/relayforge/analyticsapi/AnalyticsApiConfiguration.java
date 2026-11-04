@@ -29,7 +29,11 @@ public class AnalyticsApiConfiguration {
     }
 
     @Bean
-    AnalyticsService analyticsService(AnalyticsRepository repository) {
-        return new AnalyticsService(repository);
+    AnalyticsService analyticsService(AnalyticsRepository repository,
+            io.micrometer.core.instrument.MeterRegistry registry) {
+        registry.timer("relayforge.analytics.query.duration", "query", "overview");
+        registry.timer("relayforge.analytics.query.duration", "query", "timeseries");
+        return new AnalyticsService(repository, (query, duration) -> registry.timer(
+                "relayforge.analytics.query.duration", "query", query).record(duration));
     }
 }

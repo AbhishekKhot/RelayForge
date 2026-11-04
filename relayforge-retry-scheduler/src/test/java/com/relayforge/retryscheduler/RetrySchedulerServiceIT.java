@@ -118,6 +118,10 @@ class RetrySchedulerServiceIT {
         var registry = new SimpleMeterRegistry();
         RetrySchedulerMetrics metrics = new RetrySchedulerMetrics(jdbc, registry);
         metrics.refresh();
+        assertThat(registry.get("relayforge.delivery.backlog").gauge().value())
+                .isEqualTo(1);
+        assertThat(registry.get("relayforge.delivery.oldest.pending.age.seconds")
+                .gauge().value()).isGreaterThanOrEqualTo(0);
         assertThat(registry.get("relayforge.delivery.retry.due.backlog").gauge().value())
                 .isEqualTo(1);
         assertThat(registry.get("relayforge.delivery.retry.oldest.due.age.seconds")

@@ -68,7 +68,7 @@ for service in "${services[@]}"; do
     wait_healthy "$service"
 done
 docker compose exec -T retry-scheduler java -cp /app HealthProbe \
-    http://127.0.0.1:8080/actuator/metrics/relayforge.delivery.retry.due.backlog
+    http://127.0.0.1:9090/actuator/metrics/relayforge.delivery.retry.due.backlog
 verify_migrations
 python3 scripts/verify-b1.py
 python3 scripts/verify-b2.py

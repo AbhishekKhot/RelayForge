@@ -3,8 +3,11 @@ package com.relayforge.deliveryworker.lease;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.relayforge.apisupport.ReadinessProbe;
 import com.relayforge.deliveryworker.DeliveryKafkaLifecycle;
 import com.relayforge.deliveryworker.DeliveryProcessor;
+import com.relayforge.deliveryworker.DeliveryOutcomeRecorder;
+import com.relayforge.deliveryworker.MicrometerDeliveryOutcomeRecorder;
 import com.relayforge.deliveryworker.auth.AuthenticationStrategyResolver;
 import com.relayforge.deliveryworker.auth.StaticAuthenticationStrategy;
 import com.relayforge.deliveryworker.auth.TokenAuthenticationStrategy;
@@ -35,8 +38,10 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.RedisCallback;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.SocketOptions;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -168,11 +173,20 @@ public class DeliveryLeaseConfiguration {
     }
 
     @Bean
+    ReadinessProbe deliveryRedisReadinessProbe(StringRedisTemplate deliveryTokenRedisTemplate) {
+        return () -> Boolean.TRUE.equals(deliveryTokenRedisTemplate.execute(
+                (RedisCallback<Boolean>) connection -> "PONG".equals(connection.ping())));
+    }
+
+    @Bean
     TokenCacheService deliveryTokenCacheService(TokenExchangeService exchange,
-            StringRedisTemplate redis, ObjectMapper json) {
+            StringRedisTemplate redis, ObjectMapper json, MeterRegistry registry) {
+        registry.counter("relayforge.token.cache", "result", "hit");
+        registry.counter("relayforge.token.cache", "result", "miss");
         return new TokenCacheService(exchange, new RedisTokenCacheStore(redis, json), Clock.systemUTC(),
                 () -> ThreadLocalRandom.current().nextDouble(), java.util.UUID::randomUUID,
-                duration -> Thread.sleep(duration));
+                duration -> Thread.sleep(duration), hit -> registry.counter("relayforge.token.cache",
+                        "result", hit ? "hit" : "miss").increment());
     }
 
     @Bean
@@ -187,19 +201,26 @@ public class DeliveryLeaseConfiguration {
     }
 
     @Bean
+    DeliveryOutcomeRecorder deliveryOutcomeRecorder(MeterRegistry registry) {
+        return new MicrometerDeliveryOutcomeRecorder(registry);
+    }
+
+    @Bean
     DeliveryProcessor deliveryProcessor(DeliveryClaimService claims, DeliveryAttemptService attempts,
             DeliveryReferenceClient references, DestinationPolicy policy,
             SafeWebhookClient client, RetryPolicy retryPolicy, ObjectMapper json,
-            AuthenticationStrategyResolver authentication, DeliveryQuotaGate quotaGate) {
+            AuthenticationStrategyResolver authentication, DeliveryQuotaGate quotaGate,
+            DeliveryOutcomeRecorder outcomes) {
         return new DeliveryProcessor(claims, attempts, references, new WebhookRequestFactory(json),
                 policy, client, retryPolicy, authentication, quotaGate, Clock.systemUTC(),
-                "worker-" + java.util.UUID.randomUUID());
+                "worker-" + java.util.UUID.randomUUID(), outcomes);
     }
 
     @Bean
     DeliveryKafkaLifecycle deliveryKafkaLifecycle(Environment environment, ObjectMapper json,
-            DeliveryProcessor processor) {
+            DeliveryProcessor processor, MeterRegistry registry) {
         return new DeliveryKafkaLifecycle(
-                environment.getRequiredProperty("relayforge.kafka.bootstrap-servers"), json, processor);
+                environment.getRequiredProperty("relayforge.kafka.bootstrap-servers"), json,
+                processor, registry);
     }
 }

@@ -37,6 +37,13 @@ x-clickhouse-env: &clickhouse-env
   RELAYFORGE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?Set CLICKHOUSE_PASSWORD in .env}
   RELAYFORGE_READINESS_CLICKHOUSE: "true"
 
+x-observability-env: &observability-env
+  MANAGEMENT_SERVER_PORT: "9090"
+  MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,metrics,prometheus
+  MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS: never
+  MANAGEMENT_METRICS_DISTRIBUTION_PERCENTILES_HISTOGRAM_HTTP_SERVER_REQUESTS: "true"
+  LOGGING_STRUCTURED_FORMAT_CONSOLE: logstash
+
 x-test: &test
   image: ${CURL_IMAGE:?Set CURL_IMAGE in .env}
   profiles: [tests]
@@ -172,7 +179,7 @@ services:
       dockerfile: deploy/Dockerfile.service
       args: { MODULE: relayforge-control-plane }
     environment:
-      <<: *control-db-env
+      <<: [*control-db-env, *observability-env]
       SPRING_PROFILES_ACTIVE: ${APP_PROFILE:?Set APP_PROFILE in .env}
       SPRING_FLYWAY_URL: ${CONTROL_JDBC_URL:?Set CONTROL_JDBC_URL in .env}
       SPRING_FLYWAY_USER: ${CONTROL_DB_USER:?Set CONTROL_DB_USER in .env}
@@ -199,7 +206,7 @@ services:
       dockerfile: deploy/Dockerfile.service
       args: { MODULE: relayforge-control-publisher }
     environment:
-      <<: [*control-db-env, *kafka-env]
+      <<: [*control-db-env, *kafka-env, *observability-env]
     depends_on:
       postgres: { condition: service_healthy }
       kafka-init: { condition: service_completed_successfully }
@@ -212,7 +219,7 @@ services:
       dockerfile: deploy/Dockerfile.service
       args: { MODULE: relayforge-ingestion }
     environment:
-      <<: *ingestion-db-env
+      <<: [*ingestion-db-env, *observability-env]
       SPRING_FLYWAY_URL: ${INGESTION_JDBC_URL:?Set INGESTION_JDBC_URL in .env}
       SPRING_FLYWAY_USER: ${INGESTION_DB_USER:?Set INGESTION_DB_USER in .env}
       SPRING_FLYWAY_PASSWORD: ${INGESTION_DB_PASSWORD:?Set INGESTION_DB_PASSWORD in .env}
@@ -240,7 +247,7 @@ services:
       dockerfile: deploy/Dockerfile.service
       args: { MODULE: relayforge-ingestion-publisher }
     environment:
-      <<: [*ingestion-db-env, *kafka-env]
+      <<: [*ingestion-db-env, *kafka-env, *observability-env]
     depends_on:
       postgres: { condition: service_healthy }
       kafka-init: { condition: service_completed_successfully }
@@ -253,7 +260,7 @@ services:
       dockerfile: deploy/Dockerfile.service
       args: { MODULE: relayforge-router }
     environment:
-      <<: [*delivery-db-env, *kafka-env]
+      <<: [*delivery-db-env, *kafka-env, *observability-env]
       RELAYFORGE_INGESTION_INTERNAL_URL: ${INGESTION_INTERNAL_URL:?Set INGESTION_INTERNAL_URL in .env}
       RELAYFORGE_CONTROL_INTERNAL_URL: ${CONTROL_INTERNAL_URL:?Set CONTROL_INTERNAL_URL in .env}
       RELAYFORGE_ROUTER_EVENT_CREDENTIAL: ${ROUTER_EVENT_CREDENTIAL:?Set ROUTER_EVENT_CREDENTIAL in .env}
@@ -273,7 +280,7 @@ services:
       dockerfile: deploy/Dockerfile.service
       args: { MODULE: relayforge-delivery-api }
     environment:
-      <<: *delivery-db-env
+      <<: [*delivery-db-env, *observability-env]
       SPRING_FLYWAY_URL: ${DELIVERY_JDBC_URL:?Set DELIVERY_JDBC_URL in .env}
       SPRING_FLYWAY_USER: ${DELIVERY_DB_USER:?Set DELIVERY_DB_USER in .env}
       SPRING_FLYWAY_PASSWORD: ${DELIVERY_DB_PASSWORD:?Set DELIVERY_DB_PASSWORD in .env}
@@ -292,7 +299,7 @@ services:
       dockerfile: deploy/Dockerfile.service
       args: { MODULE: relayforge-delivery-worker }
     environment:
-      <<: [*delivery-db-env, *kafka-env]
+      <<: [*delivery-db-env, *kafka-env, *observability-env]
       SPRING_PROFILES_ACTIVE: ${APP_PROFILE:?Set APP_PROFILE in .env}
       RELAYFORGE_CONTROL_INTERNAL_URL: ${CONTROL_INTERNAL_URL:?Set CONTROL_INTERNAL_URL in .env}
       RELAYFORGE_INGESTION_INTERNAL_URL: ${INGESTION_INTERNAL_URL:?Set INGESTION_INTERNAL_URL in .env}
@@ -319,7 +326,7 @@ services:
       dockerfile: deploy/Dockerfile.service
       args: { MODULE: relayforge-delivery-publisher }
     environment:
-      <<: [*delivery-db-env, *kafka-env]
+      <<: [*delivery-db-env, *kafka-env, *observability-env]
     depends_on:
       postgres: { condition: service_healthy }
       kafka-init: { condition: service_completed_successfully }
@@ -332,8 +339,7 @@ services:
       dockerfile: deploy/Dockerfile.service
       args: { MODULE: relayforge-retry-scheduler }
     environment:
-      <<: *delivery-db-env
-      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,metrics
+      <<: [*delivery-db-env, *observability-env]
     depends_on:
       postgres: { condition: service_healthy }
 
@@ -345,7 +351,7 @@ services:
       dockerfile: deploy/Dockerfile.service
       args: { MODULE: relayforge-analytics-consumer }
     environment:
-      <<: [*clickhouse-env, *kafka-env]
+      <<: [*clickhouse-env, *kafka-env, *observability-env]
     depends_on:
       clickhouse: { condition: service_healthy }
       kafka-init: { condition: service_completed_successfully }
@@ -358,7 +364,7 @@ services:
       dockerfile: deploy/Dockerfile.service
       args: { MODULE: relayforge-analytics-api }
     environment:
-      <<: *clickhouse-env
+      <<: [*clickhouse-env, *observability-env]
       RELAYFORGE_CONTROL_INTERNAL_URL: ${CONTROL_INTERNAL_URL:?Set CONTROL_INTERNAL_URL in .env}
     ports:
       - "127.0.0.1:${ANALYTICS_API_HOST_PORT:?Set ANALYTICS_API_HOST_PORT in .env}:8080"

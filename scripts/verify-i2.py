@@ -195,6 +195,16 @@ def main():
         time.sleep(1)
     else:
         raise AssertionError("I2 analytics fact did not arrive")
+    event_uuid = query("SELECT event_id FROM routing_progress "
+                       f"WHERE event_locator = '{event_id}' LIMIT 1")
+    for service, marker in (("ingestion", event_id),
+                            ("ingestion-publisher", event_uuid),
+                            ("router", event_uuid),
+                            ("delivery-worker", delivery_id),
+                            ("analytics-consumer", delivery_id)):
+        logs = subprocess.run(["docker", "compose", "logs", "--no-color", service],
+                              text=True, capture_output=True, check=True, timeout=30).stdout
+        assert marker in logs, (service, marker)
     assert clickhouse("SELECT count() FROM relayforge_analytics.delivery_facts "
                       f"WHERE position(fact_type, '{canary}') > 0 "
                       f"OR position(status, '{canary}') > 0 "

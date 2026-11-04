@@ -16,6 +16,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -33,6 +34,20 @@ class TokenCacheServiceTest {
             UUID.randomUUID(), 1, NOW, NOW.plusSeconds(60), NOW.plusSeconds(240));
     private final TokenCacheKey key = new TokenCacheKey(lease.organizationId(), lease.endpointId(), 1, 1);
     private final JsonNode config = new ObjectMapper().createObjectNode();
+
+    @Test
+    void reportsTokenExchangeMissAndLocalCacheHit() {
+        var results = new ArrayList<Boolean>();
+        var observed = new TokenCacheService(exchange, store, Clock.fixed(NOW, ZoneOffset.UTC),
+                () -> 0.5, UUID::randomUUID, duration -> { }, results::add);
+        when(exchange.acquireToken(any(), any(), any())).thenReturn(
+                new TokenExchangeService.AcquiredToken("observed", NOW.plusSeconds(120)));
+
+        observed.resolve(config, lease, () -> true, key);
+        observed.resolve(config, lease, () -> true, key);
+
+        assertThat(results).containsExactly(false, true);
+    }
 
     @Test
     void sameKeyUsesOneTokenAndVersionsSeparateEntries() {

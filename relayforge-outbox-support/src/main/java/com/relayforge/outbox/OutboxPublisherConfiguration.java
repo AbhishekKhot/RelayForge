@@ -3,6 +3,7 @@ package com.relayforge.outbox;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.util.UUID;
@@ -50,6 +51,14 @@ public class OutboxPublisherConfiguration {
         return new JdbcOutboxRepository(outboxJdbcTemplate, owner);
     }
 
+    @Bean
+    OutboxMetrics outboxMetrics(JdbcTemplate outboxJdbcTemplate, Environment environment,
+            MeterRegistry registry) {
+        JdbcOutboxRepository.Owner owner = JdbcOutboxRepository.Owner.valueOf(
+                environment.getRequiredProperty("relayforge.outbox.owner"));
+        return new OutboxMetrics(outboxJdbcTemplate, owner, registry);
+    }
+
     @Bean(destroyMethod = "close")
     KafkaOutboxTransport outboxTransport(Environment environment) {
         return new KafkaOutboxTransport(
@@ -70,24 +79,27 @@ public class OutboxPublisherConfiguration {
     }
 
     @Bean
-    OutboxPollingJob outboxPollingJob(OutboxPublisher publisher) {
-        return new OutboxPollingJob(publisher);
+    OutboxPollingJob outboxPollingJob(OutboxPublisher publisher, OutboxMetrics metrics) {
+        return new OutboxPollingJob(publisher, metrics);
     }
 
     public static final class OutboxPollingJob {
         private static final Logger LOG = LoggerFactory.getLogger(OutboxPollingJob.class);
         private final OutboxPublisher publisher;
+        private final OutboxMetrics metrics;
 
-        public OutboxPollingJob(OutboxPublisher publisher) {
+        public OutboxPollingJob(OutboxPublisher publisher, OutboxMetrics metrics) {
             this.publisher = publisher;
+            this.metrics = metrics;
         }
 
         @Scheduled(fixedDelayString = "${relayforge.outbox.poll-delay-ms:250}",
                 initialDelayString = "${relayforge.outbox.initial-delay-ms:1000}")
         public void poll() {
             try {
-                publisher.publishBatch();
+                metrics.published(publisher.publishBatch());
             } catch (RuntimeException unavailable) {
+                metrics.failed();
                 LOG.warn("Outbox polling temporarily unavailable");
             }
         }

@@ -9,16 +9,17 @@ public final class HealthProbe {
     }
 
     public static void main(String[] args) throws Exception {
-        if (args.length != 1) {
+        if (args.length < 1 || args.length > 2) {
             System.exit(2);
         }
+        int expectedStatus = args.length == 2 ? Integer.parseInt(args[1]) : 200;
         HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
         HttpRequest request = HttpRequest.newBuilder(URI.create(args[0]))
                 .timeout(Duration.ofSeconds(7))
                 .GET()
                 .build();
         int status = client.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();
-        if (status != 200) {
+        if (status != expectedStatus) {
             System.exit(1);
         }
     }

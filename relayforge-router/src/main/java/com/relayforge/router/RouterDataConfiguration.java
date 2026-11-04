@@ -79,8 +79,10 @@ public class RouterDataConfiguration {
     }
 
     @Bean
-    RoutingService routingService(RoutingRepository repository, TransactionTemplate routerTransactionTemplate) {
-        return new RoutingService(repository, routerTransactionTemplate, 100, 20000);
+    RoutingService routingService(RoutingRepository repository, TransactionTemplate routerTransactionTemplate,
+            io.micrometer.core.instrument.MeterRegistry registry) {
+        var fanout = registry.summary("relayforge.routing.fanout");
+        return new RoutingService(repository, routerTransactionTemplate, 100, 20000, fanout::record);
     }
 
     @Bean
@@ -100,9 +102,10 @@ public class RouterDataConfiguration {
 
     @Bean
     RouterKafkaLifecycle routerKafkaLifecycle(Environment environment, ObjectMapper json,
-            ProjectionService projections, EventRoutingHandler events) {
+            ProjectionService projections, EventRoutingHandler events,
+            io.micrometer.core.instrument.MeterRegistry registry) {
         return new RouterKafkaLifecycle(environment.getRequiredProperty("relayforge.kafka.bootstrap-servers"),
                 environment.getProperty("relayforge.router.delivery-shard-id", "dlv-a"), json,
-                projections::applyChange, events);
+                projections::applyChange, events, registry);
     }
 }

@@ -30,8 +30,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.net.ssl.SSLHandshakeException;
 import javax.net.ssl.SSLPeerUnverifiedException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class DeliveryProcessor implements AutoCloseable {
+    private static final Logger LOG = LoggerFactory.getLogger(DeliveryProcessor.class);
     private final DeliveryClaimService claims;
     private final DeliveryAttemptService attempts;
     private final DeliveryReferenceClient references;
@@ -43,6 +46,7 @@ public final class DeliveryProcessor implements AutoCloseable {
     private final DeliveryQuotaGate quotaGate;
     private final Clock clock;
     private final String workerId;
+    private final DeliveryOutcomeRecorder outcomes;
     private final java.util.concurrent.ScheduledExecutorService renewals =
             Executors.newScheduledThreadPool(2);
 
@@ -70,6 +74,15 @@ public final class DeliveryProcessor implements AutoCloseable {
             DestinationPolicy policy, SafeWebhookClient client, RetryPolicy retryPolicy,
             AuthenticationStrategyResolver authentication, DeliveryQuotaGate quotaGate,
             Clock clock, String workerId) {
+        this(claims, attempts, references, requests, policy, client, retryPolicy,
+                authentication, quotaGate, clock, workerId, (outcome, elapsed) -> { });
+    }
+
+    public DeliveryProcessor(DeliveryClaimService claims, DeliveryAttemptService attempts,
+            DeliveryReferenceClient references, WebhookRequestFactory requests,
+            DestinationPolicy policy, SafeWebhookClient client, RetryPolicy retryPolicy,
+            AuthenticationStrategyResolver authentication, DeliveryQuotaGate quotaGate,
+            Clock clock, String workerId, DeliveryOutcomeRecorder outcomes) {
         this.claims = Objects.requireNonNull(claims);
         this.attempts = Objects.requireNonNull(attempts);
         this.references = Objects.requireNonNull(references);
@@ -81,6 +94,7 @@ public final class DeliveryProcessor implements AutoCloseable {
         this.quotaGate = Objects.requireNonNull(quotaGate);
         this.clock = Objects.requireNonNull(clock);
         this.workerId = Objects.requireNonNull(workerId);
+        this.outcomes = Objects.requireNonNull(outcomes);
     }
 
     public void process(UUID deliveryId) {
@@ -234,6 +248,7 @@ public final class DeliveryProcessor implements AutoCloseable {
             String excerpt = null;
             String retryAfter = null;
             RetryPolicy.Failure failure = RetryPolicy.Failure.NONE;
+            long started = System.nanoTime();
             try {
                 SafeWebhookClient.Result response = client.send(destination, request.body(),
                         Duration.ofMillis(timeoutMillis), request.headers(), () -> !lost.get());
@@ -274,6 +289,14 @@ public final class DeliveryProcessor implements AutoCloseable {
                 if (!lost.get()) {
                     attempts.finish(active.get(), attempt, httpStatus, decision.errorCode(),
                             excerpt, decision.nextAttemptAt());
+                    long elapsedNanos = Math.max(0, System.nanoTime() - started);
+                    outcomes.record(decision.outcome(), Duration.ofNanos(elapsedNanos));
+                    LOG.info("Delivery attempt finished organizationId={} eventId={} deliveryId={} "
+                                    + "endpointId={} attemptNumber={} workerName={} outcome={} httpStatus={} "
+                                    + "errorCode={} durationMs={}",
+                            lease.organizationId(), locator, lease.deliveryId(), lease.endpointId(),
+                            attempt.number(), workerId, decision.outcome(), httpStatus,
+                            decision.errorCode(), TimeUnit.NANOSECONDS.toMillis(elapsedNanos));
                 }
             }
         } catch (IOException unavailable) {

@@ -29,8 +29,9 @@ class AnalyticsKafkaLifecycleTest {
         var producer = new MockProducer<String, String>(true, new StringSerializer(),
                 new StringSerializer());
         var store = mock(ClickHouseFactStore.class);
+        var metrics = new SimpleMeterRegistry();
         var lifecycle = new AnalyticsKafkaLifecycle(consumer, producer,
-                new EnvelopeValidator(new ObjectMapper()), store, new SimpleMeterRegistry());
+                new EnvelopeValidator(new ObjectMapper()), store, metrics);
         var partition = new TopicPartition(TOPIC, 0);
         consumer.rebalance(List.of(partition));
         consumer.updateBeginningOffsets(Map.of(partition, 0L));
@@ -48,8 +49,16 @@ class AnalyticsKafkaLifecycleTest {
         consumer.addRecord(new ConsumerRecord<>(TOPIC, 0, 0, fact.toString(), value));
         lifecycle.runOnce();
         assertThat(consumer.committed(partition)).isNull();
+        assertThat(metrics.get("relayforge.clickhouse.insert").tag("result", "error")
+                .counter().count()).isEqualTo(1);
         consumer.addRecord(new ConsumerRecord<>(TOPIC, 0, 0, fact.toString(), value));
         lifecycle.runOnce();
         assertThat(consumer.committed(partition).offset()).isEqualTo(1);
+        assertThat(metrics.get("relayforge.clickhouse.insert").tag("result", "success")
+                .counter().count()).isEqualTo(1);
+        assertThat(metrics.get("relayforge.clickhouse.insert.duration").timer().count())
+                .isEqualTo(2);
+        assertThat(metrics.get("relayforge.analytics.ingest.lag.seconds").gauge().value())
+                .isGreaterThan(0);
     }
 }

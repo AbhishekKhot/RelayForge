@@ -7,6 +7,7 @@ import com.relayforge.consumer.KafkaConsumerSettings;
 import com.relayforge.consumer.MessageHandler;
 import com.relayforge.consumer.ResilientKafkaConsumer;
 import com.relayforge.contracts.EnvelopeValidator;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
 import java.util.List;
 import java.util.Properties;
@@ -28,7 +29,7 @@ public final class RouterKafkaLifecycle implements SmartLifecycle, ReadinessProb
     private Thread eventThread;
 
     public RouterKafkaLifecycle(String bootstrapServers, String deliveryShardId, ObjectMapper json,
-            MessageHandler configurationChanges, MessageHandler events) {
+            MessageHandler configurationChanges, MessageHandler events, MeterRegistry registry) {
         if (deliveryShardId == null || !deliveryShardId.matches("[A-Za-z0-9][A-Za-z0-9_-]{0,79}")) {
             throw new IllegalArgumentException("Invalid delivery shard");
         }
@@ -39,14 +40,14 @@ public final class RouterKafkaLifecycle implements SmartLifecycle, ReadinessProb
                 new KafkaProducer<>(producerSettings(bootstrapServers)), validator,
                 configurationChanges, new ConsumerOptions(1, 1, 3, Duration.ofMillis(200),
                 Duration.ofMillis(100), Duration.ofSeconds(2), Duration.ofSeconds(5)),
-                List.of(CONFIG_TOPIC));
+                List.of(CONFIG_TOPIC), registry, "router-config");
         eventConsumer = new ResilientKafkaConsumer(
                 new KafkaConsumer<>(consumerSettings(bootstrapServers,
                         "relayforge-router-events-" + deliveryShardId, 32)),
                 new KafkaProducer<>(producerSettings(bootstrapServers)), validator,
                 events, new ConsumerOptions(4, 32, 3, Duration.ofMillis(200),
                 Duration.ofMillis(100), Duration.ofSeconds(2), Duration.ofSeconds(5)),
-                List.of(EVENT_TOPIC));
+                List.of(EVENT_TOPIC), registry, "router-events");
     }
 
     private Properties consumerSettings(String servers, String group, int maximumRecords) {

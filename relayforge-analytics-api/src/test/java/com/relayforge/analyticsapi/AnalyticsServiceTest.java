@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -13,6 +15,31 @@ import org.springframework.web.server.ResponseStatusException;
 class AnalyticsServiceTest {
     private static final String FROM = "2026-11-03T10:00:00Z";
     private static final String TO = "2026-11-03T11:00:00Z";
+
+    @Test
+    void recordsQueryDurationForSuccessAndUnavailableResponses() {
+        List<String> observed = new ArrayList<>();
+        AnalyticsService service = new AnalyticsService(new AnalyticsRepository() {
+            @Override
+            public Overview overview(UUID tenant, AnalyticsRange range) {
+                return new Overview(1, 0, 0, 0, 0, null);
+            }
+
+            @Override
+            public TimeSeries timeseries(UUID tenant, AnalyticsRange range, UUID endpoint)
+                    throws IOException {
+                throw new IOException("unavailable");
+            }
+        }, (query, duration) -> {
+            assertThat(duration).isGreaterThanOrEqualTo(Duration.ZERO);
+            observed.add(query);
+        });
+
+        service.overview(UUID.randomUUID(), FROM, TO);
+        assertThatThrownBy(() -> service.timeseries(UUID.randomUUID(), FROM, TO, "hour", null))
+                .isInstanceOf(AnalyticsUnavailableException.class);
+        assertThat(observed).containsExactly("overview", "timeseries");
+    }
 
     @Test
     void passesAuthenticatedOrganizationAndEndpointToRepository() {
