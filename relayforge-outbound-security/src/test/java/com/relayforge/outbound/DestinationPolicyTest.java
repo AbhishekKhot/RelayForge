@@ -20,6 +20,8 @@ class DestinationPolicyTest {
         assertThat(result.uri().toASCIIString())
                 .isEqualTo("https://public.example/hooks/payment?id=a%26b&source=relay+forge");
         assertThat(result.headers()).containsEntry("Content-Type", "application/json");
+        assertThat(policy.validate(destination("https://8.8.8.8")).uri().getHost())
+                .isEqualTo("8.8.8.8");
     }
 
     @Test
@@ -28,8 +30,10 @@ class DestinationPolicyTest {
         for (String base : new String[]{"http://public.example", "file:///etc/passwd",
                 "https://user:secret@public.example", "https://public.example/path",
                 "https://public.example?q=x", "https://public.example#fragment",
-                "https://public.example\\@internal", "https://public.example:0"}) {
-            assertThatThrownBy(() -> policy.validate(destination(base)))
+                "https://public.example\\@internal", "https://public.example:0",
+                "https://2130706433", "https://0x7f000001", "https://0177.0.0.1",
+                "https://127.1", "https://[::ffff:169.254.169.254]"}) {
+            assertThatThrownBy(() -> policy.validate(destination(base))).as(base)
                     .isInstanceOf(InvalidDestinationException.class);
         }
     }
@@ -47,6 +51,9 @@ class DestinationPolicyTest {
         DestinationPolicy mixed = new DestinationPolicy(host -> new InetAddress[]{
                 InetAddress.getByName("8.8.8.8"), InetAddress.getByName("127.0.0.1")}, false, null);
         assertThatThrownBy(() -> mixed.validate(destination("https://public.example")))
+                .isInstanceOf(UnsafeDestinationException.class);
+        DestinationPolicy metadataHost = policy("metadata.google.internal", "169.254.169.254");
+        assertThatThrownBy(() -> metadataHost.validate(destination("https://metadata.google.internal")))
                 .isInstanceOf(UnsafeDestinationException.class);
     }
 
@@ -75,7 +82,8 @@ class DestinationPolicyTest {
                     Map.of(), Map.of()))).isInstanceOf(InvalidDestinationException.class);
         }
         for (String header : new String[]{"Host", "Connection", "Content-Length", "Proxy-Authorization",
-                "X-RelayForge-Signature", "Authorization", "Cookie"}) {
+                "X-RelayForge-Signature", "Authorization", "Cookie", "Transfer-Encoding",
+                "Proxy-Connection", "Set-Cookie", "Expect"}) {
             assertThatThrownBy(() -> policy.validate(new Destination("https://public.example", "/hook",
                     Map.of(), Map.of(header, "value")))).isInstanceOf(InvalidDestinationException.class);
         }

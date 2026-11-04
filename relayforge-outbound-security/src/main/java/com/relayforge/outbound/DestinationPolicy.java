@@ -55,6 +55,9 @@ public final class DestinationPolicy {
         if (!DNS_NAME.matcher(normalizedHost).matches() && !isBracketedIpv6(normalizedHost)) {
             throw new InvalidDestinationException();
         }
+        if (ambiguousNumericHost(normalizedHost)) {
+            throw new InvalidDestinationException();
+        }
         if (normalizedHost.endsWith(".") || normalizedHost.contains("..")
                 || normalizedHost.startsWith("-")) {
             throw new InvalidDestinationException();
@@ -127,6 +130,33 @@ public final class DestinationPolicy {
     private boolean isBracketedIpv6(String host) {
         return host.startsWith("[") && host.endsWith("]") && host.indexOf(':') > 0
                 && !host.startsWith("[::ffff:");
+    }
+
+    private boolean ambiguousNumericHost(String host) {
+        if (host.matches("0[xX][0-9a-fA-F]+")) {
+            return true;
+        }
+        if (!host.matches("[0-9.]+")) {
+            return false;
+        }
+        String[] octets = host.split("\\.", -1);
+        if (octets.length != 4) {
+            return true;
+        }
+        for (String octet : octets) {
+            if (octet.isEmpty() || octet.length() > 3
+                    || octet.length() > 1 && octet.startsWith("0")) {
+                return true;
+            }
+            try {
+                if (Integer.parseInt(octet) > 255) {
+                    return true;
+                }
+            } catch (NumberFormatException invalid) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String unbracket(String host) {
