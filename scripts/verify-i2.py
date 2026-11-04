@@ -21,7 +21,11 @@ def request(base, path, method="GET", body=None, headers=None):
         response = error
     with response:
         payload = response.read()
-        return response.status, json.loads(payload) if payload else {}, response.headers
+        try:
+            body = json.loads(payload) if payload else {}
+        except json.JSONDecodeError:
+            body = payload.decode(errors="replace")
+        return response.status, body, response.headers
 
 
 def database(name, sql):
