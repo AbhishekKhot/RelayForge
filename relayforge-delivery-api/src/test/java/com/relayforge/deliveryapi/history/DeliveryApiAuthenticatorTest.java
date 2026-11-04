@@ -25,7 +25,8 @@ class DeliveryApiAuthenticatorTest {
             scope.set(exchange.getRequestURI().getRawQuery());
             int status = "Bearer permitted".equals(exchange.getRequestHeaders().getFirst("Authorization"))
                     ? 200 : 403;
-            byte[] body = ("{\"organization_id\":\"" + organization + "\",\"key_id\":\"" + keyId + "\"}")
+            byte[] body = ("{\"organization_id\":\"" + organization + "\",\"key_id\":\"" + keyId
+                    + "\",\"quotas\":{\"max_replay_generations\":3}}")
                     .getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
             exchange.sendResponseHeaders(status, body.length);
@@ -39,7 +40,7 @@ class DeliveryApiAuthenticatorTest {
             assertThat(auth.authenticate("Bearer permitted")).isEqualTo(organization);
             assertThat(scope).hasValue("scope=deliveries:read");
             assertThat(auth.authenticateReplay("Bearer permitted"))
-                    .isEqualTo(new DeliveryApiAuthenticator.AuthorizedKey(organization, keyId));
+                    .isEqualTo(new DeliveryApiAuthenticator.AuthorizedKey(organization, keyId, 3));
             assertThat(scope).hasValue("scope=deliveries:replay");
             assertThatThrownBy(() -> auth.authenticate("Bearer denied"))
                     .isInstanceOfSatisfying(ResponseStatusException.class, failure ->

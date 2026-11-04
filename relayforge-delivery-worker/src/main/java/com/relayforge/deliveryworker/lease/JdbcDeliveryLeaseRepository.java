@@ -26,7 +26,7 @@ public final class JdbcDeliveryLeaseRepository implements DeliveryLeaseRepositor
 
     @Override
     public Optional<DeliveryClaimService.Lease> claim(UUID deliveryId, String workerId,
-            int endpointLimit, int platformLimit) {
+            int endpointLimit, int organizationLimit, int platformLimit) {
         jdbc.query("SELECT pg_advisory_xact_lock(?)", result -> {
             result.next();
             return null;
@@ -48,7 +48,9 @@ public final class JdbcDeliveryLeaseRepository implements DeliveryLeaseRepositor
         if (work.token() != null) {
             throw new IllegalStateException("Eligible work retains a lease token");
         }
-        if (activeCount(null, now) >= platformLimit || activeCount(work.endpointId(), now) >= endpointLimit) {
+        if (activeCount(null, null, now) >= platformLimit
+                || activeCount(work.endpointId(), null, now) >= endpointLimit
+                || activeCount(null, work.organizationId(), now) >= organizationLimit) {
             return Optional.empty();
         }
         Delivery delivery = lockDelivery(work.day(), deliveryId);
@@ -220,11 +222,13 @@ public final class JdbcDeliveryLeaseRepository implements DeliveryLeaseRepositor
                 """, work.day(), work.deliveryId(), work.organizationId());
     }
 
-    private int activeCount(UUID endpointId, Instant now) {
+    private int activeCount(UUID endpointId, UUID organizationId, Instant now) {
         Integer count = jdbc.queryForObject("""
                 SELECT count(*) FROM delivery_work WHERE status = 'IN_PROGRESS'
                     AND lease_expires_at > ? AND (?::uuid IS NULL OR endpoint_id = ?::uuid)
-                """, Integer.class, Timestamp.from(now), endpointId, endpointId);
+                    AND (?::uuid IS NULL OR organization_id = ?::uuid)
+                """, Integer.class, Timestamp.from(now), endpointId, endpointId,
+                organizationId, organizationId);
         return Objects.requireNonNull(count);
     }
 

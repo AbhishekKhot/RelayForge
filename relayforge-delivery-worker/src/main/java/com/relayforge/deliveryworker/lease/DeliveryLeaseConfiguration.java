@@ -11,6 +11,8 @@ import com.relayforge.deliveryworker.auth.TokenAuthenticationStrategy;
 import com.relayforge.deliveryworker.auth.TokenExchangeService;
 import com.relayforge.deliveryworker.auth.TokenCacheService;
 import com.relayforge.deliveryworker.auth.RedisTokenCacheStore;
+import com.relayforge.deliveryworker.DeliveryQuotaGate;
+import com.relayforge.deliveryworker.RedisDeliveryQuotaGate;
 import com.relayforge.deliveryworker.http.DeliveryReferenceClient;
 import com.relayforge.deliveryworker.http.WebhookRequestFactory;
 import com.relayforge.deliveryworker.retry.RetryPolicy;
@@ -180,12 +182,17 @@ public class DeliveryLeaseConfiguration {
     }
 
     @Bean
+    DeliveryQuotaGate deliveryQuotaGate(StringRedisTemplate redis) {
+        return new RedisDeliveryQuotaGate(redis);
+    }
+
+    @Bean
     DeliveryProcessor deliveryProcessor(DeliveryClaimService claims, DeliveryAttemptService attempts,
             DeliveryReferenceClient references, DestinationPolicy policy,
             SafeWebhookClient client, RetryPolicy retryPolicy, ObjectMapper json,
-            AuthenticationStrategyResolver authentication) {
+            AuthenticationStrategyResolver authentication, DeliveryQuotaGate quotaGate) {
         return new DeliveryProcessor(claims, attempts, references, new WebhookRequestFactory(json),
-                policy, client, retryPolicy, authentication, Clock.systemUTC(),
+                policy, client, retryPolicy, authentication, quotaGate, Clock.systemUTC(),
                 "worker-" + java.util.UUID.randomUUID());
     }
 

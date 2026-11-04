@@ -18,6 +18,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -28,9 +29,11 @@ import org.springframework.web.bind.annotation.RestController;
 @ConditionalOnProperty(name = "relayforge.database.username")
 public final class ProvisioningController {
     private final OrganizationService organizations;
+    private final QuotaConfigurationService quotas;
 
-    public ProvisioningController(OrganizationService organizations) {
+    public ProvisioningController(OrganizationService organizations, QuotaConfigurationService quotas) {
         this.organizations = organizations;
+        this.quotas = quotas;
     }
 
     @PostMapping("/organizations")
@@ -63,6 +66,14 @@ public final class ProvisioningController {
                 organizationId, authenticatedId);
         return Map.of("data", Map.of("organization_id", owner.id(), "name", owner.name(),
                         "plan_code", owner.planCode()),
+                "request_id", RequestIdFilter.current(request));
+    }
+
+    @PutMapping("/organizations/{organizationId}/quotas")
+    public Map<String, Object> replaceQuotas(@PathVariable UUID organizationId,
+            @Valid @RequestBody ReplaceQuotasRequest body, HttpServletRequest request) {
+        return Map.of("data", Map.of("organization_id", organizationId,
+                        "quotas", quotas.replace(organizationId, body.quotaOverrides())),
                 "request_id", RequestIdFilter.current(request));
     }
 
@@ -105,5 +116,9 @@ public final class ProvisioningController {
     }
 
     public record RotateKeyRequest(List<String> scopes) {
+    }
+
+    public record ReplaceQuotasRequest(@JsonProperty("quota_overrides") @NotNull
+            Map<String, Object> quotaOverrides) {
     }
 }

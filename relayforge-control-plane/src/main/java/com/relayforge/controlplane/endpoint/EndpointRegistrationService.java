@@ -25,6 +25,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
+import org.springframework.dao.DataAccessException;
+import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -127,19 +129,26 @@ public final class EndpointRegistrationService {
         } finally {
             Arrays.fill(secretBytes, (byte) 0);
         }
-        return transactions.execute(status -> {
-            repository.insert(endpointId, organizationId, name.trim(), destination.baseUrl(),
-                    destination.path(), queryJson, headersJson, metadataJson,
-                    deliveryPolicy.timeoutMs(), deliveryPolicy.maxConcurrency(), deliveryPolicy.maxAttempts(),
-                    createdAt, authentication.type(), storedAuth, storedSigning);
-            for (String eventType : eventTypes) {
-                repository.insertSubscription(UUID.randomUUID(), organizationId, endpointId, eventType);
-            }
-            repository.insertAudit(organizationId, endpointId, "endpoint.created", requestId);
-            changes.record(organizationId, endpointId);
-            return new CreatedEndpoint(endpointId, name.trim(), List.copyOf(eventTypes), createdAt,
-                    signingSecret);
-        });
+        try {
+            return transactions.execute(status -> {
+                if (!repository.hasActiveEndpointCapacity(organizationId)) {
+                    throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS);
+                }
+                repository.insert(endpointId, organizationId, name.trim(), destination.baseUrl(),
+                        destination.path(), queryJson, headersJson, metadataJson,
+                        deliveryPolicy.timeoutMs(), deliveryPolicy.maxConcurrency(), deliveryPolicy.maxAttempts(),
+                        createdAt, authentication.type(), storedAuth, storedSigning);
+                for (String eventType : eventTypes) {
+                    repository.insertSubscription(UUID.randomUUID(), organizationId, endpointId, eventType);
+                }
+                repository.insertAudit(organizationId, endpointId, "endpoint.created", requestId);
+                changes.record(organizationId, endpointId);
+                return new CreatedEndpoint(endpointId, name.trim(), List.copyOf(eventTypes), createdAt,
+                        signingSecret);
+            });
+        } catch (DataAccessException | TransactionException unavailable) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE);
+        }
     }
 
     public EndpointRepository.EndpointView get(UUID organizationId, UUID endpointId) {

@@ -10,6 +10,8 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.relayforge.deliveryworker.http.DeliveryReferenceClient;
+import com.relayforge.deliveryworker.auth.AuthenticationStrategyResolver;
+import com.relayforge.deliveryworker.auth.StaticAuthenticationStrategy;
 import com.relayforge.deliveryworker.http.WebhookRequestFactory;
 import com.relayforge.deliveryworker.lease.DeliveryAttemptService;
 import com.relayforge.deliveryworker.lease.DeliveryClaimService;
@@ -68,6 +70,40 @@ class DeliveryProcessorTest {
     }
 
     @Test
+    void pausesNewClaimsWhenRedisQuotaCoordinationIsUnavailable() throws Exception {
+        UUID deliveryId = UUID.randomUUID();
+        UUID organizationId = UUID.randomUUID();
+        UUID endpointId = UUID.randomUUID();
+        Instant now = Instant.parse("2026-11-02T10:00:00Z");
+        DeliveryClaimService claims = mock(DeliveryClaimService.class);
+        DeliveryAttemptService attempts = mock(DeliveryAttemptService.class);
+        DeliveryReferenceClient references = mock(DeliveryReferenceClient.class);
+        SafeWebhookClient client = mock(SafeWebhookClient.class);
+        when(attempts.candidate(deliveryId)).thenReturn(new DeliveryAttemptService.WorkReference(
+                organizationId, endpointId, 0, now.minusSeconds(60), now.plusSeconds(3600)));
+        when(references.endpoint(organizationId, endpointId)).thenReturn(new ObjectMapper().readTree("""
+                {"max_concurrency":2,"organization_concurrency_limit":1,
+                 "max_attempts":3,"version":1}
+                """));
+        DestinationPolicy policy = new DestinationPolicy(host -> new InetAddress[]{
+                InetAddress.getByName("127.0.0.1")}, true, URI.create("http://localhost:18080"));
+        var authentication = new AuthenticationStrategyResolver(new StaticAuthenticationStrategy(),
+                (configuration, lease, leaseValid) -> {
+                    throw new IllegalStateException("Unused token strategy");
+                });
+        try (DeliveryProcessor processor = new DeliveryProcessor(claims, attempts, references,
+                new WebhookRequestFactory(new ObjectMapper()), policy, client,
+                new RetryPolicy(Clock.fixed(now, ZoneOffset.UTC), () -> 0.5,
+                        new RetryPolicy.Settings(Duration.ofSeconds(1), Duration.ofMinutes(15),
+                                Duration.ofHours(1), Duration.ofHours(24))),
+                authentication, () -> false, Clock.fixed(now, ZoneOffset.UTC), "worker-test")) {
+            processor.process(deliveryId);
+        }
+        verify(attempts).deferUnclaimed(deliveryId, now.plusSeconds(30));
+        verifyNoInteractions(claims, client);
+    }
+
+    @Test
     void usesRetryAfterFor429AndTerminates400() throws Exception {
         assertOutcome(429, "120", Instant.parse("2026-11-02T10:02:00Z"),
                 "HTTP_RETRYABLE");
@@ -95,7 +131,7 @@ class DeliveryProcessorTest {
                 host -> new InetAddress[]{InetAddress.getByName("127.0.0.1")}, true, simulator);
         when(attempts.candidate(deliveryId)).thenReturn(new DeliveryAttemptService.WorkReference(
                 organizationId, endpointId, 0, now.minusSeconds(60), now.plusSeconds(3600)));
-        when(claims.claim(deliveryId, "worker-test", 2, 200)).thenReturn(Optional.of(lease));
+        when(claims.claim(deliveryId, "worker-test", 2, 100, 200)).thenReturn(Optional.of(lease));
         when(claims.owns(lease)).thenReturn(true);
         when(attempts.eventLocator(lease)).thenReturn("evt_test");
         when(attempts.reserve(lease, 3)).thenReturn(new DeliveryAttemptService.Attempt(
@@ -103,7 +139,8 @@ class DeliveryProcessorTest {
         when(references.endpoint(organizationId, endpointId)).thenReturn(json.readTree("""
                 {"organization_id":"%s","endpoint_id":"%s","base_url":"http://localhost:18080",
                  "path":"/hook","query_params":{},"headers":{},"version":1,"timeout_ms":1000,
-                 "max_attempts":3,"max_concurrency":2,"authentication":{"type":"NONE"},
+                 "max_attempts":3,"max_concurrency":2,"organization_concurrency_limit":100,
+                 "authentication":{"type":"NONE"},
                  "signing_secret":"%s"}
                 """.formatted(organizationId, endpointId, secret)));
         when(references.payload(organizationId, "evt_test")).thenReturn(json.readTree("""
@@ -146,7 +183,7 @@ class DeliveryProcessorTest {
                 host -> new InetAddress[]{InetAddress.getByName("127.0.0.1")}, true, simulator);
         when(attempts.candidate(deliveryId)).thenReturn(new DeliveryAttemptService.WorkReference(
                 organizationId, endpointId, 1, now.minusSeconds(60), now.plusSeconds(3600)));
-        when(claims.claim(deliveryId, "worker-test", 2, 200)).thenReturn(Optional.of(lease));
+        when(claims.claim(deliveryId, "worker-test", 2, 100, 200)).thenReturn(Optional.of(lease));
         when(claims.owns(lease)).thenReturn(true);
         when(attempts.eventLocator(lease)).thenReturn("evt_test");
         when(attempts.reserve(lease, 3)).thenReturn(new DeliveryAttemptService.Attempt(
@@ -154,7 +191,8 @@ class DeliveryProcessorTest {
         when(references.endpoint(organizationId, endpointId)).thenReturn(json.readTree("""
                 {"organization_id":"%s","endpoint_id":"%s","base_url":"http://localhost:18080",
                  "path":"/hook","query_params":{},"headers":{},"version":1,"timeout_ms":1000,
-                 "max_attempts":3,"max_concurrency":2,"authentication":{"type":"NONE"},
+                 "max_attempts":3,"max_concurrency":2,"organization_concurrency_limit":100,
+                 "authentication":{"type":"NONE"},
                  "signing_secret":"%s"}
                 """.formatted(organizationId, endpointId, secret)));
         when(references.payload(organizationId, "evt_test")).thenReturn(json.readTree("""

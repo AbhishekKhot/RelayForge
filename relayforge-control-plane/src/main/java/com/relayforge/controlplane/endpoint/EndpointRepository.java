@@ -7,6 +7,8 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface EndpointRepository {
+    boolean hasActiveEndpointCapacity(UUID organizationId);
+
     void insert(UUID id, UUID organizationId, String name, String baseUrl, String path,
             String queryJson, String headersJson, String metadataJson,
             int timeoutMs, int maxConcurrency, int maxAttempts, Instant createdAt,

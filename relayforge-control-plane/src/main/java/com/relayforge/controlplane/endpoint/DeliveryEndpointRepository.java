@@ -9,7 +9,8 @@ public interface DeliveryEndpointRepository {
 
     record StoredEndpoint(String status, long version, String baseUrl, String path,
             String queryJson, String headersJson, int timeoutMs, int maxAttempts,
-            int maxConcurrency, String authType, EncryptedSecret authSecret, Long authVersion,
+            int maxConcurrency, int organizationConcurrencyLimit, String authType,
+            EncryptedSecret authSecret, Long authVersion,
             long credentialVersion, EncryptedSecret signingSecret, Long signingVersion) {
         @Override
         public String toString() {

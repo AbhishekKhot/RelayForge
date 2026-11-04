@@ -112,6 +112,14 @@ class DeliveryReplayIT {
     }
 
     @Test
+    void rejectsReplayBeyondConfiguredGenerationLimit() {
+        Source source = source("DEAD_LETTERED", "ACTIVE", NOW.minusSeconds(60));
+        assertStatus(HttpStatus.TOO_MANY_REQUESTS, () -> service.replay(source.organization(), ACTOR,
+                source.delivery(), "quota", null, "req", 1));
+        assertThat(count("replay_requests", "original_delivery_id", source.delivery())).isZero();
+    }
+
+    @Test
     void rollsBackEveryRowWhenReadyOutboxFails() {
         Source source = source("DEAD_LETTERED", "ACTIVE", NOW.minusSeconds(60));
         jdbc.execute("""

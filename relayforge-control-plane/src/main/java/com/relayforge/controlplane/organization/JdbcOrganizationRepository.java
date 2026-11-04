@@ -80,14 +80,24 @@ public final class JdbcOrganizationRepository implements OrganizationRepository 
     }
 
     @Override
-    public Optional<Integer> findActiveEventRateLimit(UUID organizationId) {
-        List<Integer> limits = jdbc.query("SELECT (quota_config->>'events_per_minute')::integer "
+    public Optional<Long> findActiveQuotaRevision(UUID organizationId) {
+        return jdbc.query("SELECT config_revision FROM organizations WHERE id = ? AND status = 'ACTIVE'",
+                (row, index) -> row.getLong(1), organizationId).stream().findFirst();
+    }
+
+    @Override
+    public Optional<QuotaSnapshot> findActiveQuotaSnapshot(UUID organizationId) {
+        return jdbc.query("SELECT plan_code, config_revision, quota_config::text "
                         + "FROM organizations WHERE id = ? AND status = 'ACTIVE'",
-                (result, rowNumber) -> result.getObject(1, Integer.class), organizationId);
-        if (limits.size() != 1 || limits.get(0) == null || limits.get(0) < 1) {
-            return Optional.empty();
-        }
-        return Optional.of(limits.get(0));
+                (row, index) -> new QuotaSnapshot(row.getString(1), row.getLong(2),
+                        row.getString(3)), organizationId).stream().findFirst();
+    }
+
+    @Override
+    public boolean updateActiveQuotas(UUID organizationId, String quotaJson) {
+        return jdbc.update("UPDATE organizations SET quota_config = ?::jsonb, "
+                        + "config_revision = config_revision + 1, updated_at = clock_timestamp() "
+                        + "WHERE id = ? AND status = 'ACTIVE'", quotaJson, organizationId) == 1;
     }
 
     @Override

@@ -68,11 +68,12 @@ public final class EventController {
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             HttpServletRequest request) throws IOException {
         AuthenticatedOrganization organization = authenticator.authenticate(authorization);
-        EventRequestParser.ParsedEvent body = parser.parse(request.getInputStream(), maxPayloadBytes);
+        int allowedBytes = Math.min(maxPayloadBytes, organization.maxEventPayloadBytes());
+        EventRequestParser.ParsedEvent body = parser.parse(request.getInputStream(), allowedBytes);
         EventPayload payload;
         try {
             payload = EventPayload.validate(json, body.eventType(), body.schemaVersion(),
-                    body.occurredAt(), body.data(), maxPayloadBytes);
+                    body.occurredAt(), body.data(), allowedBytes);
         } catch (IllegalArgumentException invalid) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
         }

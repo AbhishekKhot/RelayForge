@@ -21,7 +21,11 @@ public interface OrganizationRepository {
 
     boolean activeOrganizationExists(UUID organizationId);
 
-    Optional<Integer> findActiveEventRateLimit(UUID organizationId);
+    Optional<Long> findActiveQuotaRevision(UUID organizationId);
+
+    Optional<QuotaSnapshot> findActiveQuotaSnapshot(UUID organizationId);
+
+    boolean updateActiveQuotas(UUID organizationId, String quotaJson);
 
     Optional<OrganizationView> findOrganizationForOwner(UUID requestedId, UUID authenticatedId);
 
@@ -40,5 +44,8 @@ public interface OrganizationRepository {
     }
 
     record ProvisioningRequest(UUID organizationId, String keyId) {
+    }
+
+    record QuotaSnapshot(String planCode, long revision, String configJson) {
     }
 }

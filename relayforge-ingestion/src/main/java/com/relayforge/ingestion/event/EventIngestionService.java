@@ -22,17 +22,19 @@ public final class EventIngestionService {
     private final DurabilityGate durability;
     private final TransactionTemplate transactions;
     private final ObjectMapper json;
+    private final EventTokenBucket bucket;
     private final long mapEpoch;
     private final String ingestionShardId;
     private final String deliveryShardId;
 
     public EventIngestionService(IngestionRepository repository, DurabilityGate durability,
-            TransactionTemplate transactions, ObjectMapper json, long mapEpoch,
+            TransactionTemplate transactions, ObjectMapper json, EventTokenBucket bucket, long mapEpoch,
             String ingestionShardId, String deliveryShardId) {
         this.repository = repository;
         this.durability = durability;
         this.transactions = transactions;
         this.json = json;
+        this.bucket = bucket;
         this.mapEpoch = mapEpoch;
         this.ingestionShardId = ingestionShardId;
         this.deliveryShardId = deliveryShardId;
@@ -97,6 +99,10 @@ public final class EventIngestionService {
 
     private void writeNew(AuthenticatedOrganization organization, String key, int bucket,
             EventPayload payload, UUID eventId, String locator, LocalDate day, Instant acceptedAt) {
+        if (!this.bucket.tryAcquire(organization.id(), organization.eventsPerMinute(),
+                organization.burstEvents())) {
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS);
+        }
         if (!repository.reserveRate(organization.id(), acceptedAt, organization.eventsPerMinute())) {
             throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS);
         }

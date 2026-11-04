@@ -22,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -39,6 +40,7 @@ public final class DeliveryProcessor implements AutoCloseable {
     private final SafeWebhookClient client;
     private final RetryPolicy retryPolicy;
     private final AuthenticationStrategyResolver authentication;
+    private final DeliveryQuotaGate quotaGate;
     private final Clock clock;
     private final String workerId;
     private final java.util.concurrent.ScheduledExecutorService renewals =
@@ -52,13 +54,22 @@ public final class DeliveryProcessor implements AutoCloseable {
                 new AuthenticationStrategyResolver(new StaticAuthenticationStrategy(),
                         (configuration, lease, leaseValid) -> {
                             throw new IllegalStateException("Token strategy is unavailable");
-                        }), clock, workerId);
+                        }), () -> true, clock, workerId);
     }
 
     public DeliveryProcessor(DeliveryClaimService claims, DeliveryAttemptService attempts,
             DeliveryReferenceClient references, WebhookRequestFactory requests,
             DestinationPolicy policy, SafeWebhookClient client, RetryPolicy retryPolicy,
             AuthenticationStrategyResolver authentication, Clock clock, String workerId) {
+        this(claims, attempts, references, requests, policy, client, retryPolicy,
+                authentication, () -> true, clock, workerId);
+    }
+
+    public DeliveryProcessor(DeliveryClaimService claims, DeliveryAttemptService attempts,
+            DeliveryReferenceClient references, WebhookRequestFactory requests,
+            DestinationPolicy policy, SafeWebhookClient client, RetryPolicy retryPolicy,
+            AuthenticationStrategyResolver authentication, DeliveryQuotaGate quotaGate,
+            Clock clock, String workerId) {
         this.claims = Objects.requireNonNull(claims);
         this.attempts = Objects.requireNonNull(attempts);
         this.references = Objects.requireNonNull(references);
@@ -67,6 +78,7 @@ public final class DeliveryProcessor implements AutoCloseable {
         this.client = Objects.requireNonNull(client);
         this.retryPolicy = Objects.requireNonNull(retryPolicy);
         this.authentication = Objects.requireNonNull(authentication);
+        this.quotaGate = Objects.requireNonNull(quotaGate);
         this.clock = Objects.requireNonNull(clock);
         this.workerId = Objects.requireNonNull(workerId);
     }
@@ -88,6 +100,11 @@ public final class DeliveryProcessor implements AutoCloseable {
             attempts.rejectUnclaimed(deliveryId, "CONFIGURATION_INVALID");
             return;
         }
+        int organizationConcurrency = endpoint.path("organization_concurrency_limit").asInt(0);
+        if (organizationConcurrency < 1 || organizationConcurrency > 20000) {
+            attempts.rejectUnclaimed(deliveryId, "CONFIGURATION_INVALID");
+            return;
+        }
         int maxAttempts = endpoint.path("max_attempts").asInt(0);
         if (maxAttempts < 1 || maxAttempts > 20) {
             attempts.rejectUnclaimed(deliveryId, "CONFIGURATION_INVALID");
@@ -102,8 +119,20 @@ public final class DeliveryProcessor implements AutoCloseable {
             attempts.rejectUnclaimed(deliveryId, "CONFIGURATION_INVALID");
             return;
         }
-        var claimed = claims.claim(deliveryId, workerId, concurrency, 200);
+        String permitId = UUID.randomUUID().toString();
+        if (!quotaGate.reserve(candidate.organizationId(), permitId, organizationConcurrency)) {
+            attempts.deferUnclaimed(deliveryId, clock.instant().plusSeconds(30));
+            return;
+        }
+        Optional<DeliveryClaimService.Lease> claimed;
+        try {
+            claimed = claims.claim(deliveryId, workerId, concurrency, organizationConcurrency, 200);
+        } catch (RuntimeException failure) {
+            quotaGate.release(candidate.organizationId(), permitId);
+            throw failure;
+        }
         if (claimed.isEmpty()) {
+            quotaGate.release(candidate.organizationId(), permitId);
             return;
         }
         DeliveryClaimService.Lease lease = claimed.get();
@@ -116,6 +145,7 @@ public final class DeliveryProcessor implements AutoCloseable {
                         var renewed = claims.renew(active.get());
                         if (renewed.isPresent()) {
                             active.set(renewed.get());
+                            quotaGate.renew(lease.organizationId(), permitId);
                         } else {
                             lost.set(true);
                         }
@@ -250,6 +280,7 @@ public final class DeliveryProcessor implements AutoCloseable {
             throw new IllegalStateException("Delivery reference is unavailable", unavailable);
         } finally {
             renewal.cancel(true);
+            quotaGate.release(lease.organizationId(), permitId);
         }
     }
 

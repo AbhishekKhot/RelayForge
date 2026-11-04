@@ -5,7 +5,7 @@ import java.util.UUID;
 
 public interface DeliveryLeaseRepository {
     Optional<DeliveryClaimService.Lease> claim(UUID deliveryId, String workerId,
-            int endpointLimit, int platformLimit);
+            int endpointLimit, int organizationLimit, int platformLimit);
 
     Optional<DeliveryClaimService.Lease> renew(DeliveryClaimService.Lease lease);
 

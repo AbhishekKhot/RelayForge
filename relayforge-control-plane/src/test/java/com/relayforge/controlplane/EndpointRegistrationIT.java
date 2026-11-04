@@ -180,6 +180,23 @@ class EndpointRegistrationIT {
     }
 
     @Test
+    void limitsActiveEndpointsUsingOrganizationQuota() {
+        Credentials owner = credentials();
+        HttpHeaders admin = new HttpHeaders();
+        admin.setContentType(MediaType.APPLICATION_JSON);
+        admin.set("X-Provisioning-Credential", PROVISIONING_CREDENTIAL);
+        ResponseEntity<JsonNode> updated = client.exchange("/v1/organizations/"
+                + owner.organizationId() + "/quotas", HttpMethod.PUT,
+                new HttpEntity<>(Map.of("quota_overrides", Map.of("max_active_endpoints", 1)), admin),
+                JsonNode.class);
+        assertThat(updated.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(register(owner.key(), request(simulatorUrl())).getStatusCode())
+                .isEqualTo(HttpStatus.CREATED);
+        assertThat(register(owner.key(), request(simulatorUrl())).getStatusCode())
+                .isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+    }
+
+    @Test
     void rejectsMetadataAddressAndDoesNotPersistEndpoint() throws Exception {
         Credentials credentials = credentials();
         ResponseEntity<JsonNode> rejected = register(credentials.key(), request("https://169.254.169.254"));

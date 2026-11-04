@@ -7,7 +7,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -18,14 +17,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 public final class OrganizationService {
-    private static final Map<String, Integer> FREE_DEFAULTS = Map.of(
-            "events_per_minute", 600,
-            "max_active_endpoints", 25,
-            "max_in_flight_deliveries", 100);
-    private static final Map<String, Integer> PLATFORM_MAXIMUMS = Map.of(
-            "events_per_minute", 60000,
-            "max_active_endpoints", 1000,
-            "max_in_flight_deliveries", 10000);
     private static final Set<String> ALLOWED_SCOPES = Set.of(
             "events:write", "events:read", "endpoints:read", "endpoints:write",
             "deliveries:read", "deliveries:replay", "analytics:read", "organizations:read");
@@ -50,10 +41,12 @@ public final class OrganizationService {
         String validatedName = requireText(name, 160);
         byte[] requestHash = requestHash(idempotencyKey);
         String selectedPlan = planCode == null ? "FREE" : planCode;
-        if (!"FREE".equals(selectedPlan)) {
+        Map<String, Integer> quotas;
+        try {
+            quotas = QuotaPolicy.resolve(selectedPlan, overrides);
+        } catch (IllegalArgumentException invalid) {
             throw invalidRequest();
         }
-        Map<String, Integer> quotas = quotas(overrides);
         ApiKeyCodec.IssuedKey key = codec.issue();
         UUID organizationId = UUID.randomUUID();
         try {
@@ -153,26 +146,6 @@ public final class OrganizationService {
     public OrganizationRepository.OrganizationView organizationForOwner(UUID requestedId, UUID authenticatedId) {
         return repository.findOrganizationForOwner(requestedId, authenticatedId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
-    }
-
-    public int eventRateLimitFor(UUID authenticatedId) {
-        return repository.findActiveEventRateLimit(authenticatedId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE));
-    }
-
-    private Map<String, Integer> quotas(Map<String, Object> overrides) {
-        Map<String, Integer> result = new LinkedHashMap<>(FREE_DEFAULTS);
-        if (overrides != null) {
-            for (Map.Entry<String, Object> entry : overrides.entrySet()) {
-                Integer maximum = PLATFORM_MAXIMUMS.get(entry.getKey());
-                if (maximum == null || !(entry.getValue() instanceof Integer value)
-                        || value < 1 || value > maximum) {
-                    throw invalidRequest();
-                }
-                result.put(entry.getKey(), value);
-            }
-        }
-        return result;
     }
 
     private List<String> validateScopes(List<String> scopes) {

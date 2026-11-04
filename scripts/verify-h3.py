@@ -1,6 +1,7 @@
 """Verify scoped analytics aggregates, validation, freshness, and outage response."""
 
 import subprocess
+import time
 from urllib.parse import urlencode
 from uuid import UUID, uuid4
 
@@ -8,10 +9,17 @@ from verify_support import get, post, settings
 
 
 def clickhouse(sql):
-    subprocess.run(["docker", "compose", "exec", "-T", "clickhouse", "sh", "-c",
-                    'clickhouse-client --user "$CLICKHOUSE_USER" '
-                    '--password "$CLICKHOUSE_PASSWORD" --query "$1"', "sh", sql],
-                   check=True, capture_output=True, text=True, timeout=15)
+    command = ["docker", "compose", "exec", "-T", "clickhouse", "sh", "-c",
+               'clickhouse-client --user "$CLICKHOUSE_USER" '
+               '--password "$CLICKHOUSE_PASSWORD" --query "$1"', "sh", sql]
+    for attempt in range(3):
+        try:
+            subprocess.run(command, check=True, capture_output=True, text=True, timeout=45)
+            return
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            if attempt == 2:
+                raise
+            time.sleep(2)
 
 
 def owner(control, label, credential):

@@ -82,9 +82,13 @@ public final class DeliveryApiAuthenticator {
                 if (!keyId.toString().equals(keyValue)) {
                     throw new IllegalArgumentException("Invalid key identifier");
                 }
-                return new AuthorizedKey(organization, keyId);
+                int maximumGeneration = parsed.path("quotas").path("max_replay_generations").asInt(-1);
+                if (maximumGeneration < 1 || maximumGeneration > 100) {
+                    throw new IllegalArgumentException("Invalid replay limit");
+                }
+                return new AuthorizedKey(organization, keyId, maximumGeneration);
             }
-            return new AuthorizedKey(organization, null);
+            return new AuthorizedKey(organization, null, 0);
         } catch (IOException | IllegalArgumentException failure) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE);
         } catch (InterruptedException interrupted) {
@@ -93,6 +97,6 @@ public final class DeliveryApiAuthenticator {
         }
     }
 
-    public record AuthorizedKey(UUID organizationId, UUID keyId) {
+    public record AuthorizedKey(UUID organizationId, UUID keyId, int maxReplayGenerations) {
     }
 }

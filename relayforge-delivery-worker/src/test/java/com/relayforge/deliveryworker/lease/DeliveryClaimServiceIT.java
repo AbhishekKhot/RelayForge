@@ -158,6 +158,15 @@ class DeliveryClaimServiceIT {
     }
 
     @Test
+    void enforcesOrganizationConcurrencyAcrossEndpoints() {
+        UUID organization = UUID.randomUUID();
+        UUID first = due(UUID.randomUUID(), organization);
+        UUID second = due(UUID.randomUUID(), organization);
+        assertThat(claims.claim(first, "worker-one", 2, 1, 20)).isPresent();
+        assertThat(claims.claim(second, "worker-two", 2, 1, 20)).isEmpty();
+    }
+
+    @Test
     void reservesAttemptBeforeSendAndFinalizesSuccessfulDelivery() {
         UUID delivery = due(UUID.randomUUID());
         DeliveryClaimService.Lease lease = claims.claim(delivery, "worker-send", 2, 20).orElseThrow();
@@ -309,7 +318,10 @@ class DeliveryClaimServiceIT {
     }
 
     private static UUID due(UUID endpoint) {
-        UUID organization = UUID.randomUUID();
+        return due(endpoint, UUID.randomUUID());
+    }
+
+    private static UUID due(UUID endpoint, UUID organization) {
         UUID event = UUID.randomUUID();
         UUID delivery = UUID.randomUUID();
         LocalDate day = LocalDate.now(ZoneOffset.UTC);

@@ -10,6 +10,7 @@ public interface OrganizationAuthenticator {
         return authenticate(authorization);
     }
 
-    record AuthenticatedOrganization(UUID id, int eventsPerMinute) {
+    record AuthenticatedOrganization(UUID id, int eventsPerMinute, int burstEvents,
+            int maxEventPayloadBytes) {
     }
 }

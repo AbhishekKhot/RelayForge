@@ -47,7 +47,7 @@ public final class ControlPlaneAuthFilter extends OncePerRequestFilter {
             chain.doFilter(request, response);
             return;
         }
-        if (isProvisioningPath(path)) {
+        if (isProvisioningPath(path, request.getMethod())) {
             String supplied = request.getHeader("X-Provisioning-Credential");
             if (supplied == null || supplied.length() > 256 || !MessageDigest.isEqual(
                     provisioningCredential, supplied.getBytes(StandardCharsets.UTF_8))) {
@@ -83,10 +83,12 @@ public final class ControlPlaneAuthFilter extends OncePerRequestFilter {
         chain.doFilter(request, response);
     }
 
-    private boolean isProvisioningPath(String path) {
+    private boolean isProvisioningPath(String path, String method) {
         return path.equals("/v1/organizations") || path.equals("/v1/users")
                 || path.equals("/v1/organizations/recover")
-                || path.startsWith("/v1/api-keys/");
+                || path.startsWith("/v1/api-keys/")
+                || "PUT".equals(method) && path.startsWith("/v1/organizations/")
+                    && path.endsWith("/quotas");
     }
 
     private String requiredScope(String path, HttpServletRequest request) {
