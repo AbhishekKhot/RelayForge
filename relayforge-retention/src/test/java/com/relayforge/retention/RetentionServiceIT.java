@@ -191,8 +191,23 @@ class RetentionServiceIT {
                     event_accepted_at, ingestion_shard_id, delivery_shard_id, status)
                 VALUES (?, ?, ?, ?, 'ing-a', 'dlv-a', 'NO_SUBSCRIBERS')
                 """, day, event, organization, Timestamp.from(accepted));
-        retention.runOnce();
-        assertThat(partitionExists(deliverSql, "routing_progress", day)).isFalse();
+        var report = retention.runOnce();
+        assertThat(partitionExists(deliverSql, "routing_progress", day))
+                .as("report=%s events=%s routed=%s ingestion_unpublished=%s "
+                                + "delivery_unpublished=%s delivery_work=%s", report,
+                        ingestSql.queryForObject("SELECT count(*) FROM events WHERE accepted_day = ?",
+                                Integer.class, day),
+                        deliverSql.queryForObject("SELECT count(*) FROM routing_progress "
+                                + "WHERE accepted_day = ?", Integer.class, day),
+                        ingestSql.queryForObject("SELECT count(*) FROM ingestion_outbox "
+                                + "WHERE accepted_day = ? AND (status <> 'PUBLISHED' "
+                                + "OR published_at IS NULL)", Integer.class, day),
+                        deliverSql.queryForObject("SELECT count(*) FROM delivery_outbox "
+                                + "WHERE accepted_day = ? AND (status <> 'PUBLISHED' "
+                                + "OR published_at IS NULL)", Integer.class, day),
+                        deliverSql.queryForObject("SELECT count(*) FROM delivery_work "
+                                + "WHERE accepted_day = ?", Integer.class, day))
+                .isFalse();
         assertThat(partitionExists(ingestSql, "events", day)).isFalse();
     }
 
