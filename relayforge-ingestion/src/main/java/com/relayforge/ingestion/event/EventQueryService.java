@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
+import java.time.Clock;
 import java.util.UUID;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
@@ -15,14 +16,21 @@ public final class EventQueryService {
     private final ObjectMapper json;
     private final String ingestionShardId;
     private final String deliveryShardId;
+    private final Clock clock;
 
     public EventQueryService(IngestionRepository repository, DeliverySummaryClient summaries,
             ObjectMapper json, String ingestionShardId, String deliveryShardId) {
+        this(repository, summaries, json, ingestionShardId, deliveryShardId, Clock.systemUTC());
+    }
+
+    public EventQueryService(IngestionRepository repository, DeliverySummaryClient summaries,
+            ObjectMapper json, String ingestionShardId, String deliveryShardId, Clock clock) {
         this.repository = repository;
         this.summaries = summaries;
         this.json = json;
         this.ingestionShardId = ingestionShardId;
         this.deliveryShardId = deliveryShardId;
+        this.clock = clock;
     }
 
     public QueriedEvent find(UUID organizationId, String locator) {
@@ -40,6 +48,9 @@ public final class EventQueryService {
             IngestionRepository.StoredEvent stored = repository.findEvent(organizationId,
                     decoded.acceptedDay(), decoded.eventId())
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+            if (!stored.acceptedAt().plusSeconds(2160L * 3600).isAfter(clock.instant())) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+            }
             if (stored.payloadJson() == null) {
                 throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE);
             }

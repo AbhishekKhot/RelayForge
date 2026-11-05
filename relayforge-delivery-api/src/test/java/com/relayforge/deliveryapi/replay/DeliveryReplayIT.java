@@ -75,6 +75,22 @@ class DeliveryReplayIT {
     }
 
     @Test
+    void rejectsDuplicateReplayAfterSourceEventExpires() {
+        Source source = source("DEAD_LETTERED", "ACTIVE",
+                NOW.minusSeconds(2160L * 3600 - 60));
+        service.replay(source.organization(), ACTOR, source.delivery(),
+                "expiry-key", "Recovered", "req-before");
+        var dataSource = new DriverManagerDataSource(DATABASE.getJdbcUrl(),
+                DATABASE.getUsername(), DATABASE.getPassword());
+        var afterExpiry = new DeliveryReplayService(jdbc,
+                new TransactionTemplate(new DataSourceTransactionManager(dataSource)),
+                Clock.fixed(NOW.plusSeconds(120), ZoneOffset.UTC));
+
+        assertStatus(HttpStatus.CONFLICT, () -> afterExpiry.replay(source.organization(), ACTOR,
+                source.delivery(), "expiry-key", "Recovered", "req-after"));
+    }
+
+    @Test
     void rejectsChangedBodyAndOtherOrganization() {
         Source source = source("DEAD_LETTERED", "ACTIVE", NOW.minusSeconds(60));
         service.replay(source.organization(), ACTOR, source.delivery(), "same-key", "one", "req");
@@ -164,7 +180,8 @@ class DeliveryReplayIT {
         UUID delivery = UUID.randomUUID();
         LocalDate day = acceptedAt.atZone(ZoneOffset.UTC).toLocalDate();
         if (day.isBefore(LocalDate.now(ZoneOffset.UTC).minusDays(1))) {
-            for (String table : new String[] {"routing_progress", "deliveries"}) {
+            for (String table : new String[] {"routing_progress", "deliveries",
+                    "replay_requests", "delivery_audit_records"}) {
                 jdbc.execute("CREATE TABLE IF NOT EXISTS " + table + "_" + day.toString().replace("-", "")
                         + " PARTITION OF " + table + " FOR VALUES FROM ('" + day + "') TO ('"
                         + day.plusDays(1) + "')");

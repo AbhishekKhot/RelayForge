@@ -2,7 +2,9 @@ package com.relayforge.ingestion.event;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
+import java.time.Clock;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -16,6 +18,25 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class EventQueryServiceTest {
+    @Test
+    void hidesExpiredEventDuringPhysicalPartitionGrace() {
+        Instant now = Instant.parse("2026-11-04T12:00:00Z");
+        IngestionRepository repository = mock(IngestionRepository.class);
+        DeliverySummaryClient summaries = mock(DeliverySummaryClient.class);
+        EventQueryService service = new EventQueryService(repository, summaries, new ObjectMapper(),
+                "ing-a", "dlv-a", Clock.fixed(now, ZoneOffset.UTC));
+        UUID organization = UUID.randomUUID();
+        UUID eventId = UUID.randomUUID();
+        LocalDate day = LocalDate.parse("2026-08-06");
+        String locator = EventLocator.encode(eventId, day, 1, 1, "ing-a", "dlv-a");
+        when(repository.findEvent(organization, day, eventId)).thenReturn(Optional.of(
+                new IngestionRepository.StoredEvent("order.created", 1, "{}", null,
+                        now.minusSeconds(2160L * 3600))));
+
+        assertNotFound(() -> service.find(organization, locator));
+        verifyNoInteractions(summaries);
+    }
+
     @Test
     void rejectsMalformedAndOtherShardLocatorsBeforeStorageAccess() {
         IngestionRepository repository = mock(IngestionRepository.class);

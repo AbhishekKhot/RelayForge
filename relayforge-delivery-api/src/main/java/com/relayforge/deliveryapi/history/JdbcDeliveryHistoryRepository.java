@@ -4,6 +4,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.LocalDate;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -18,6 +19,7 @@ public final class JdbcDeliveryHistoryRepository implements DeliveryHistoryRepos
 
     @Override
     public List<DeliveryRow> list(UUID organizationId, LocalDate retentionDay,
+            Instant retentionCutoff,
             DeliveryQueryParameters.Page page) {
         DeliveryQueryParameters.Cursor cursor = page.cursor();
         return jdbc.query("""
@@ -32,6 +34,7 @@ public final class JdbcDeliveryHistoryRepository implements DeliveryHistoryRepos
                     AND progress.event_id = delivery.event_id
                     AND progress.organization_id = delivery.organization_id
                 WHERE delivery.organization_id = ? AND delivery.accepted_day >= ?
+                    AND progress.event_accepted_at > ?
                     AND delivery.created_at >= ? AND delivery.created_at < ?
                     AND (?::varchar IS NULL OR delivery.status = ?)
                     AND (?::uuid IS NULL OR delivery.endpoint_id = ?::uuid)
@@ -39,6 +42,7 @@ public final class JdbcDeliveryHistoryRepository implements DeliveryHistoryRepos
                         (delivery.created_at, delivery.id) < (?::timestamptz, ?::uuid))
                 ORDER BY delivery.created_at DESC, delivery.id DESC LIMIT ?
                 """, (row, index) -> mapDelivery(row), organizationId, retentionDay,
+                Timestamp.from(retentionCutoff),
                 Timestamp.from(page.from()), Timestamp.from(page.to()),
                 page.status(), page.status(), page.endpointId(), page.endpointId(),
                 cursor == null ? null : Timestamp.from(cursor.createdAt()),
@@ -47,7 +51,8 @@ public final class JdbcDeliveryHistoryRepository implements DeliveryHistoryRepos
     }
 
     @Override
-    public Optional<DeliveryRow> find(UUID organizationId, UUID deliveryId, LocalDate retentionDay) {
+    public Optional<DeliveryRow> find(UUID organizationId, UUID deliveryId,
+            LocalDate retentionDay, Instant retentionCutoff) {
         return jdbc.query("""
                 SELECT delivery.accepted_day, delivery.id, progress.event_locator,
                     delivery.endpoint_id, delivery.subscription_id, delivery.generation,
@@ -61,8 +66,10 @@ public final class JdbcDeliveryHistoryRepository implements DeliveryHistoryRepos
                     AND progress.organization_id = delivery.organization_id
                 WHERE delivery.organization_id = ? AND delivery.id = ?
                     AND delivery.accepted_day >= ?
+                    AND progress.event_accepted_at > ?
                 ORDER BY delivery.accepted_day DESC LIMIT 1
-                """, (row, index) -> mapDelivery(row), organizationId, deliveryId, retentionDay)
+                """, (row, index) -> mapDelivery(row), organizationId, deliveryId,
+                retentionDay, Timestamp.from(retentionCutoff))
                 .stream().findFirst();
     }
 

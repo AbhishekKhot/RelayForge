@@ -36,6 +36,7 @@
         <module>relayforge-analytics-api</module>
         <module>relayforge-contracts</module>
         <module>relayforge-schema-tests</module>
+        <module>relayforge-retention</module>
     </modules>
     <build>
         <plugins>

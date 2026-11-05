@@ -129,7 +129,7 @@ class OwnerMigrationsIT {
                 .load();
         int expected = switch (owner) {
             case "control-plane" -> 5;
-            case "ingestion" -> 3;
+            case "ingestion" -> 4;
             case "delivery" -> 5;
             default -> 1;
         };

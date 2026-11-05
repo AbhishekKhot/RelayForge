@@ -7,10 +7,11 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface DeliveryHistoryRepository {
-    List<DeliveryRow> list(UUID organizationId, LocalDate retentionDay,
+    List<DeliveryRow> list(UUID organizationId, LocalDate retentionDay, Instant retentionCutoff,
             DeliveryQueryParameters.Page page);
 
-    Optional<DeliveryRow> find(UUID organizationId, UUID deliveryId, LocalDate retentionDay);
+    Optional<DeliveryRow> find(UUID organizationId, UUID deliveryId, LocalDate retentionDay,
+            Instant retentionCutoff);
 
     List<AttemptRow> attempts(UUID organizationId, LocalDate acceptedDay, UUID deliveryId);
 

@@ -72,6 +72,10 @@ public final class DeliveryReplayService {
                 SELECT event_id FROM routing_progress
                 WHERE accepted_day = ? AND event_id = ? AND organization_id = ? FOR UPDATE
                 """, UUID.class, source.day(), source.event(), organization);
+        Instant now = clock.instant();
+        if (!source.acceptedAt().plusSeconds(2160L * 3600).isAfter(now)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT);
+        }
         List<Existing> existing = jdbc.query("""
                 SELECT request_hash, replay_delivery_id, delivery.generation
                 FROM replay_requests request JOIN deliveries delivery
@@ -90,9 +94,7 @@ public final class DeliveryReplayService {
             }
             return new ReplayResult(sourceId, prior.delivery(), prior.generation(), "PENDING");
         }
-        Instant now = clock.instant();
-        if (!"DEAD_LETTERED".equals(source.status())
-                || !source.acceptedAt().plusSeconds(2160L * 3600).isAfter(now)) {
+        if (!"DEAD_LETTERED".equals(source.status())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT);
         }
         List<String> endpoints = jdbc.query("""

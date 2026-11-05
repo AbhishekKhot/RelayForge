@@ -49,7 +49,7 @@ verify_migrations() {
         if [[ "$database" == relayforge_control ]]; then
             expected=5
         elif [[ "$database" == relayforge_ingestion ]]; then
-            expected=3
+            expected=4
         elif [[ "$database" == relayforge_delivery ]]; then
             expected=5
         fi
@@ -78,6 +78,9 @@ done
 docker compose exec -T retry-scheduler java -cp /app HealthProbe \
     http://127.0.0.1:9090/actuator/metrics/relayforge.delivery.retry.due.backlog
 verify_migrations
+docker compose --profile maintenance run --build --rm retention
+wal_before="$(docker compose exec -T postgres sh -c \
+    'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "SELECT wal_bytes FROM pg_stat_wal"')"
 python3 scripts/verify-b1.py
 python3 scripts/verify-b2.py
 python3 scripts/verify-b3.py
@@ -113,6 +116,10 @@ for service in control-plane control-publisher ingestion ingestion-publisher rou
         analytics-consumer analytics-api; do
     docker compose run --rm "test-$service" >/dev/null
 done
+scripts/measure-retention-storage.sh
+wal_after="$(docker compose exec -T postgres sh -c \
+    'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "SELECT wal_bytes FROM pg_stat_wal"')"
+echo "Cluster WAL bytes during acceptance: $((wal_after - wal_before))"
 
 docker compose stop postgres
 docker compose exec -T control-plane java -cp /app HealthProbe http://127.0.0.1:8080/health/live
