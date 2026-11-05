@@ -29,3 +29,5 @@ jobs:
         run: python3 deploy/ingestion-ha/verify.py
       - name: Verify observability and dependency readiness
         run: python3 scripts/verify-i3.py
+      - name: Verify J1 end-to-end happy path
+        run: python3 scripts/verify-j1.py
