@@ -12,14 +12,16 @@ from uuid import UUID, uuid4
 from verify_support import get, post, post_status, settings
 
 
-COMPOSE = ["docker", "compose"]
+COMPOSE = ["docker", "compose", "-f", "compose.yaml",
+           "-f", "deploy/ingestion-ha/compose.yaml"]
 DATABASES = {"relayforge_control", "relayforge_ingestion", "relayforge_delivery"}
 
 
 def sql(database, statement):
     assert database in DATABASES
+    service = "ingestion-primary" if database == "relayforge_ingestion" else "postgres"
     result = subprocess.run(
-        COMPOSE + ["exec", "-T", "postgres", "sh", "-c",
+        COMPOSE + ["exec", "-T", service, "sh", "-c",
                    'psql -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$1"',
                    "sh", database],
         input=statement + "\n", text=True, capture_output=True, check=True, timeout=20)

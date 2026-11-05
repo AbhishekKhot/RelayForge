@@ -301,6 +301,7 @@ def verify_routing(env, control, ingestion):
     wait_healthy("delivery-worker")
     verify_expired_lease_recovery()
     print("D3 routing and E1 expired-lease recovery checks passed")
+    run(["python3", "scripts/verify-j1.py"])
 
 
 def restore_base():
