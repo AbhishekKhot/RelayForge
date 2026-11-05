@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 from uuid import UUID, uuid4
 
-from verify_support import get, post, settings
+from verify_support import get, post, post_status, settings
 
 
 COMPOSE = ["docker", "compose"]
@@ -119,10 +119,11 @@ def main():
           AND event_type = '{event_type}' AND status = 'ACTIVE';
     """) == "1")
 
-    status, accepted = post(ingestion, "/v1/events",
-                            {"event_type": event_type, "data": {"check": payload_marker}},
-                            {**bearer, "Idempotency-Key": idempotency_key})
-    assert status == 202, f"Event ingestion returned {status}"
+    status, accepted = post_status(ingestion, "/v1/events",
+                                   {"event_type": event_type,
+                                    "data": {"check": payload_marker}},
+                                   {**bearer, "Idempotency-Key": idempotency_key})
+    assert status == 202, f"Event ingestion returned {status}: {accepted.get('code')}"
     locator = accepted["data"]["event_id"]
     assert re.fullmatch(r"evt_[A-Za-z0-9_-]+", locator), "Invalid event locator"
     event_row = sql("relayforge_ingestion", f"""
