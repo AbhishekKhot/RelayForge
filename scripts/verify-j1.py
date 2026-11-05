@@ -24,7 +24,8 @@ def sql(database, statement):
         COMPOSE + ["exec", "-T", service, "sh", "-c",
                    'psql -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$1"',
                    "sh", database],
-        input=statement + "\n", text=True, capture_output=True, check=True, timeout=20)
+        input=statement + "\n", text=True, capture_output=True, timeout=20)
+    assert result.returncode == 0, f"PostgreSQL query failed: {result.stderr.strip()}"
     return result.stdout.strip()
 
 
@@ -129,7 +130,7 @@ def main():
     locator = accepted["data"]["event_id"]
     assert re.fullmatch(r"evt_[A-Za-z0-9_-]+", locator), "Invalid event locator"
     event_row = sql("relayforge_ingestion", f"""
-        SELECT id || '|' || event_type || '|' || payload ->> 'check'
+        SELECT id || '|' || event_type || '|' || (payload ->> 'check')
         FROM events WHERE organization_id = '{organization}'
           AND idempotency_key = '{idempotency_key}';
     """)

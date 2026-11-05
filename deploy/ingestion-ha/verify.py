@@ -144,6 +144,7 @@ def verify():
     assert count("events", organization_id) == 2
     assert count("ingestion_outbox", organization_id) == 2
     verify_routing(env, control, ingestion)
+    run(["python3", "scripts/verify-j1.py"])
     run(["python3", "scripts/verify-e2.py"])
     run(["python3", "scripts/verify-g1.py"])
     run(["python3", "scripts/verify-g2.py"])
@@ -301,7 +302,6 @@ def verify_routing(env, control, ingestion):
     wait_healthy("delivery-worker")
     verify_expired_lease_recovery()
     print("D3 routing and E1 expired-lease recovery checks passed")
-    run(["python3", "scripts/verify-j1.py"])
 
 
 def restore_base():
