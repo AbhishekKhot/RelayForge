@@ -1,5 +1,6 @@
-"""Verify duplicate event and delivery messages have one external effect."""
+"""Verify failure and duplicate scenarios on the synchronous Compose stack."""
 
+import base64
 import json
 import subprocess
 import time
@@ -210,6 +211,90 @@ def publisher_ack_recovery(ingestion, simulator, env, bearer, organization,
     print("J2 publisher replay after Kafka ack kept one delivery and one receiver call")
 
 
+def worker_crash_during_send(control, ingestion, simulator, env, bearer, organization,
+                             run_id):
+    event_type = "acceptance.j2.crash." + run_id
+    hook_path = "/j2-crash-" + run_id
+    scenario = "j2-worker-crash-" + run_id
+    for state, next_state, response in (
+            ("Started", "sent", {"status": 204, "fixedDelayMilliseconds": 30000}),
+            ("sent", None, {"status": 204})):
+        mapping = {"request": {"method": "POST", "urlPath": hook_path},
+                   "response": response, "scenarioName": scenario,
+                   "requiredScenarioState": state}
+        if next_state:
+            mapping["newScenarioState"] = next_state
+        status, created = post(simulator, "/__admin/mappings", mapping, {})
+        assert status == 201 and created["id"]
+    status, endpoint = post(control, "/v1/endpoints", {
+        "name": "J2 crash receiver " + run_id,
+        "destination": {"base_url": env["WEBHOOK_SIMULATOR_URL"], "path": hook_path,
+                        "query_params": {}, "headers": {}, "metadata": {}},
+        "authentication": {"type": "NONE"}, "event_types": [event_type],
+        "delivery_policy": {"timeout_ms": 45000, "max_attempts": 3,
+                            "max_concurrency": 2}}, bearer)
+    assert status == 201
+    endpoint_id = str(UUID(endpoint["data"]["endpoint_id"]))
+    wait_for("J2 crash endpoint projection", lambda: query(f"""
+        SELECT count(*) FROM subscription_projection WHERE organization_id = '{organization}'
+          AND endpoint_id = '{endpoint_id}' AND event_type = '{event_type}'
+          AND status = 'ACTIVE';""") == "1")
+    status, accepted = post_status(ingestion, "/v1/events", {
+        "event_type": event_type, "data": {"check": "crash"}},
+        {**bearer, "Idempotency-Key": str(uuid4())})
+    assert status == 202, (status, accepted)
+    locator = accepted["data"]["event_id"]
+
+    def receiver_started():
+        status, scenarios = get(simulator, "/__admin/scenarios", {})
+        assert status == 200
+        return any(item["name"] == scenario and item["state"] == "sent"
+                   for item in scenarios["scenarios"])
+
+    wait_for("J2 receiver accepted first request", receiver_started)
+    delivery_id = query(f"""SELECT delivery.id FROM deliveries delivery
+        JOIN routing_progress progress ON progress.accepted_day = delivery.accepted_day
+         AND progress.event_id = delivery.event_id
+         AND progress.organization_id = delivery.organization_id
+        WHERE progress.event_locator = '{locator}'
+          AND delivery.organization_id = '{organization}';""")
+    delivery_id = str(UUID(delivery_id))
+    assert query(f"""SELECT outcome FROM delivery_attempts
+        WHERE delivery_id = '{delivery_id}' AND attempt_number = 1;""") == "IN_PROGRESS"
+    subprocess.run(COMPOSE + ["kill", "-s", "SIGKILL", "delivery-worker"],
+                   check=True, timeout=30)
+    subprocess.run(COMPOSE + ["start", "delivery-worker"], check=True, timeout=30)
+    wait_for("J2 crash recovery", lambda: query(f"""
+        SELECT status FROM deliveries WHERE id = '{delivery_id}';""") == "SUCCEEDED", 180)
+    assert query(f"""SELECT string_agg(attempt_number || ':' || outcome, ','
+        ORDER BY attempt_number) FROM delivery_attempts
+        WHERE delivery_id = '{delivery_id}';""") == "1:UNKNOWN,2:SUCCEEDED"
+    status, received = post(simulator, "/__admin/requests/find", {
+        "method": "POST", "url": hook_path,
+        "bodyPatterns": [{"contains": delivery_id}]}, {})
+    assert status == 200 and len(received["requests"]) == 2
+    seen = sorted(json.loads(base64.b64decode(item["bodyAsBase64"]))["attempt_number"]
+                  for item in received["requests"])
+    assert seen == [1, 2]
+    assert query(f"""SELECT count(*) FROM deliveries WHERE id = '{delivery_id}'
+        AND organization_id = '{organization}';""") == "1"
+    assert query(f"""SELECT count(*) FROM delivery_outbox WHERE delivery_id = '{delivery_id}'
+        AND message_type = 'delivery.ready.v1' AND status = 'PUBLISHED';""") == "2"
+    event_id = query(f"""SELECT event_id FROM deliveries WHERE id = '{delivery_id}';""")
+    assert ingestion_sql(f"""SELECT count(*) FROM ingestion_outbox WHERE event_id = '{event_id}'
+        AND message_type = 'event.accepted.v1' AND status = 'PUBLISHED';""") == "1"
+    wait_for("J2 crash analytics", lambda: clickhouse(f"""
+        SELECT count() FROM relayforge_analytics.delivery_facts FINAL
+        WHERE organization_id = '{organization}' AND event_id = '{event_id}'
+          AND fact_type = 'event.accepted'""") == "1" and clickhouse(f"""
+        SELECT count() FROM relayforge_analytics.delivery_facts FINAL
+        WHERE organization_id = '{organization}' AND delivery_id = '{delivery_id}'
+          AND fact_type = 'delivery.succeeded'""") == "1")
+    status, event_view = get(ingestion, "/v1/events/" + locator, bearer)
+    assert status == 200 and event_view["data"]["delivery_summary"]["succeeded_count"] == 1
+    print("J2 worker crash during receiver send recovered one logical delivery")
+
+
 def main():
     env = settings()
     control = f"http://127.0.0.1:{env['CONTROL_API_HOST_PORT']}"
@@ -344,6 +429,7 @@ def main():
             ("reset", {"fault": "CONNECTION_RESET_BY_PEER"}, None, True)):
         receiver_case(control, ingestion, delivery_api, simulator, env, bearer, organization,
                       run_id, case, response, first_status, retry)
+    worker_crash_during_send(control, ingestion, simulator, env, bearer, organization, run_id)
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 show_startup_failure() {
     docker compose ps >&2
     docker compose logs --tail=100 control-plane delivery-api control-publisher \
-        ingestion-publisher retry-scheduler analytics-consumer kafka >&2
+        ingestion-publisher retry-scheduler analytics-consumer kafka kafka-data-init >&2
     for service in control-plane delivery-api; do
         local container
         container="$(docker compose ps -a -q "$service")"
@@ -114,7 +114,7 @@ fi
 for service in control-plane control-publisher ingestion ingestion-publisher router \
         delivery-api delivery-worker delivery-publisher retry-scheduler \
         analytics-consumer analytics-api; do
-    docker compose run --rm "test-$service" >/dev/null
+    docker compose run --rm --no-deps "test-$service" >/dev/null
 done
 scripts/measure-retention-storage.sh
 wal_after="$(docker compose exec -T postgres sh -c \

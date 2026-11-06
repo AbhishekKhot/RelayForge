@@ -155,6 +155,35 @@ def main():
            "RETRYABLE_FAILURE,RETRYABLE_FAILURE,SUCCEEDED"
     print("G1 transient token responses retry without consuming webhook attempts")
 
+    mapping(simulator, "/g1-timeout-token", {"status": 200,
+            "fixedDelayMilliseconds": 12000,
+            "headers": {"Content-Type": "application/json"},
+            "jsonBody": {"access_token": "g1-late-token"}},
+            scenario="g1-auth-timeout", required="Started", next_state="ready")
+    mapping(simulator, "/g1-timeout-token", {"status": 200,
+            "headers": {"Content-Type": "application/json"},
+            "jsonBody": {"access_token": "g1-timeout-recovered"}},
+            scenario="g1-auth-timeout", required="ready")
+    mapping(simulator, "/g1-timeout-hook", {"status": 204},
+            authorization="Bearer g1-timeout-recovered")
+    timeout = {**retry, "token_url": simulator_url + "/g1-timeout-token"}
+    timeout_id, timeout_status, timeout_attempts = delivery(control, ingestion, bearer,
+            organization, simulator_url, "timeout", timeout)
+    assert (timeout_status, timeout_attempts) == ("SUCCEEDED", "1")
+    assert query("SELECT string_agg(outcome, ',' ORDER BY attempt_number) "
+                 "FROM authentication_attempts WHERE delivery_id = '%s';" % timeout_id) == \
+           "RETRYABLE_FAILURE,SUCCEEDED"
+    assert query("SELECT count(*) FROM delivery_attempts WHERE delivery_id = '%s' "
+                 "AND outcome = 'SUCCEEDED';" % timeout_id) == "1"
+    for _ in range(20):
+        status, token_calls = post(simulator, "/__admin/requests/count", {
+            "method": "POST", "url": "/g1-timeout-token"}, {})
+        if status == 200 and token_calls["count"] == 2:
+            break
+        time.sleep(1)
+    assert status == 200 and token_calls["count"] == 2
+    print("G1 token timeout retries without reserving a webhook attempt")
+
     mapping(simulator, "/g1-refresh-token", {"status": 200,
             "headers": {"Content-Type": "application/json"},
             "jsonBody": {"access_token": "g1-stale-token"}},
