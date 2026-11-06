@@ -74,6 +74,87 @@ def outbox_envelope(database, outbox_id):
     return ingestion_sql(statement) if database == "ingestion_outbox" else query(statement)
 
 
+def receiver_case(control, ingestion, delivery_api, simulator, env, bearer, organization,
+                  run_id, case, first_response, first_status, retry):
+    event_type = f"acceptance.j2.{case}.{run_id}"
+    hook_path = f"/j2-{case}-{run_id}"
+    mapping = {"request": {"method": "POST", "urlPath": hook_path},
+               "response": first_response}
+    if retry:
+        scenario = f"j2-{case}-{run_id}"
+        mapping.update({"scenarioName": scenario, "requiredScenarioState": "Started",
+                        "newScenarioState": "recovered"})
+    status, created = post(simulator, "/__admin/mappings", mapping, {})
+    assert status == 201 and created["id"]
+    if retry:
+        status, created = post(simulator, "/__admin/mappings", {
+            "request": {"method": "POST", "urlPath": hook_path},
+            "response": {"status": 204}, "scenarioName": scenario,
+            "requiredScenarioState": "recovered"}, {})
+        assert status == 201 and created["id"]
+    status, endpoint = post(control, "/v1/endpoints", {
+        "name": "J2 " + case + " " + run_id,
+        "destination": {"base_url": env["WEBHOOK_SIMULATOR_URL"], "path": hook_path,
+                        "query_params": {}, "headers": {}, "metadata": {}},
+        "authentication": {"type": "NONE"}, "event_types": [event_type],
+        "delivery_policy": {"timeout_ms": 3000, "max_attempts": 2,
+                            "max_concurrency": 2}}, bearer)
+    assert status == 201
+    endpoint_id = str(UUID(endpoint["data"]["endpoint_id"]))
+    wait_for(case + " projection", lambda: query(f"""
+        SELECT count(*) FROM subscription_projection WHERE organization_id = '{organization}'
+          AND endpoint_id = '{endpoint_id}' AND event_type = '{event_type}'
+          AND status = 'ACTIVE';""") == "1")
+    status, accepted = post_status(ingestion, "/v1/events", {
+        "event_type": event_type, "data": {"check": case}},
+        {**bearer, "Idempotency-Key": str(uuid4())})
+    assert status == 202, (case, status, accepted)
+    locator = accepted["data"]["event_id"]
+    expected = "SUCCEEDED" if retry else "DEAD_LETTERED"
+    delivery_id = wait_for(case + " final delivery", lambda: query(f"""
+        SELECT delivery.id FROM deliveries delivery JOIN routing_progress progress
+          ON progress.accepted_day = delivery.accepted_day
+         AND progress.event_id = delivery.event_id
+         AND progress.organization_id = delivery.organization_id
+        WHERE progress.event_locator = '{locator}'
+          AND delivery.organization_id = '{organization}'
+          AND delivery.status = '{expected}';"""))
+    delivery_id = str(UUID(delivery_id))
+    event_id = query(f"""SELECT event_id FROM deliveries WHERE id = '{delivery_id}';""")
+    assert str(UUID(event_id)) == event_id
+    attempts = "2" if retry else "1"
+    assert query(f"""SELECT attempt_count FROM deliveries
+        WHERE id = '{delivery_id}';""") == attempts
+    first_attempt = query(f"""SELECT outcome || '|' || COALESCE(http_status::text, '')
+        FROM delivery_attempts WHERE delivery_id = '{delivery_id}' AND attempt_number = 1;""")
+    assert first_attempt == (("RETRY_SCHEDULED" if retry else "DEAD_LETTERED")
+                             + "|" + (str(first_status) if first_status else "")), (case, first_attempt)
+    if retry:
+        assert query(f"""SELECT outcome || '|' || http_status FROM delivery_attempts
+            WHERE delivery_id = '{delivery_id}' AND attempt_number = 2;""") == "SUCCEEDED|204"
+    assert query(f"""SELECT count(*) FROM deliveries WHERE organization_id = '{organization}'
+        AND event_id = '{event_id}';""") == "1"
+    assert query(f"""SELECT count(*) FROM delivery_outbox WHERE delivery_id = '{delivery_id}'
+        AND message_type = 'delivery.ready.v1' AND status = 'PUBLISHED';""") == attempts
+    assert ingestion_sql(f"""SELECT count(*) FROM ingestion_outbox
+        WHERE organization_id = '{organization}' AND event_id = '{event_id}'
+          AND message_type = 'event.accepted.v1' AND status = 'PUBLISHED';""") == "1"
+    wait_for(case + " receiver count", lambda: post(simulator, "/__admin/requests/count",
+        {"method": "POST", "url": hook_path}, {})[1]["count"] == int(attempts))
+    fact_type = "delivery.succeeded" if retry else "delivery.dead_lettered"
+    wait_for(case + " analytics", lambda: clickhouse(f"""
+        SELECT count() FROM relayforge_analytics.delivery_facts FINAL
+        WHERE organization_id = '{organization}' AND event_id = '{event_id}'
+          AND fact_type = 'event.accepted'""") == "1" and clickhouse(f"""
+        SELECT count() FROM relayforge_analytics.delivery_facts FINAL
+        WHERE organization_id = '{organization}' AND delivery_id = '{delivery_id}'
+          AND fact_type = '{fact_type}'""") == "1")
+    status, detail = get(delivery_api, "/v1/deliveries/" + delivery_id, bearer)
+    assert status == 200 and detail["data"]["delivery"]["status"] == expected
+    assert len(detail["data"]["attempts"]) == int(attempts)
+    print(f"J2 {case} receiver response reached {expected} in {attempts} attempt(s)")
+
+
 def main():
     env = settings()
     control = f"http://127.0.0.1:{env['CONTROL_API_HOST_PORT']}"
@@ -156,6 +237,11 @@ def main():
             AND event_id = '{event_id}';""") == "1"
         assert query(f"""SELECT count(*) FROM delivery_outbox WHERE delivery_id = '{delivery_id}'
             AND message_type = 'delivery.ready.v1';""") == "1"
+        status, before_send = post(simulator, "/__admin/requests/count",
+                                   {"method": "POST", "url": hook_path}, {})
+        assert status == 200 and before_send["count"] == 0
+        assert query(f"""SELECT count(*) FROM delivery_attempts
+            WHERE delivery_id = '{delivery_id}';""") == "0"
         publish_duplicate("relayforge.event.accepted.v1", locator,
                           outbox_envelope("ingestion_outbox", accepted_outbox))
         wait_for("router duplicate consumption", lambda: consumer_caught_up(
@@ -191,6 +277,16 @@ def main():
     status, detail = get(delivery_api, "/v1/deliveries/" + delivery_id, bearer)
     assert status == 200 and detail["data"]["delivery"]["status"] == "SUCCEEDED"
     print("J2 duplicate API, accepted Kafka, and ready Kafka messages had one external effect")
+
+    for case, response, first_status, retry in (
+            ("400", {"status": 400}, 400, False),
+            ("408", {"status": 408}, 408, True),
+            ("429", {"status": 429, "headers": {"Retry-After": "1"}}, 429, True),
+            ("500", {"status": 500}, 500, True),
+            ("timeout", {"status": 200, "fixedDelayMilliseconds": 10000}, None, True),
+            ("reset", {"fault": "CONNECTION_RESET_BY_PEER"}, None, True)):
+        receiver_case(control, ingestion, delivery_api, simulator, env, bearer, organization,
+                      run_id, case, response, first_status, retry)
 
 
 if __name__ == "__main__":
