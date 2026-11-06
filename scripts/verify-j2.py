@@ -155,6 +155,61 @@ def receiver_case(control, ingestion, delivery_api, simulator, env, bearer, orga
     print(f"J2 {case} receiver response reached {expected} in {attempts} attempt(s)")
 
 
+def publisher_ack_recovery(ingestion, simulator, env, bearer, organization,
+                           event_type, hook_path):
+    subprocess.run(COMPOSE + ["stop", "ingestion-publisher"], check=True, timeout=30)
+    try:
+        status, accepted = post_status(ingestion, "/v1/events", {
+            "event_type": event_type, "data": {"check": "publisher-recovery"}},
+            {**bearer, "Idempotency-Key": str(uuid4())})
+        assert status == 202, (status, accepted)
+        locator = accepted["data"]["event_id"]
+        outbox = wait_for("J2 pending publisher row", lambda: ingestion_sql(f"""
+            SELECT id || '|' || event_id FROM ingestion_outbox
+            WHERE organization_id = '{organization}' AND partition_key = '{locator}'
+              AND message_type = 'event.accepted.v1' AND status = 'PENDING';"""))
+        outbox_id, event_id = outbox.split("|")
+        publish_duplicate("relayforge.event.accepted.v1", locator,
+                          outbox_envelope("ingestion_outbox", outbox_id))
+        delivery_id = wait_for("J2 delivery after Kafka ack", lambda: query(f"""
+            SELECT delivery.id FROM deliveries delivery JOIN routing_progress progress
+              ON progress.accepted_day = delivery.accepted_day
+             AND progress.event_id = delivery.event_id
+             AND progress.organization_id = delivery.organization_id
+            WHERE progress.event_locator = '{locator}'
+              AND delivery.organization_id = '{organization}';"""))
+        delivery_id = str(UUID(delivery_id))
+        assert ingestion_sql(f"""SELECT status FROM ingestion_outbox
+            WHERE id = '{outbox_id}';""") == "PENDING"
+    finally:
+        subprocess.run(COMPOSE + ["start", "ingestion-publisher"], check=True, timeout=30)
+    wait_for("J2 publisher replay", lambda: ingestion_sql(f"""
+        SELECT status FROM ingestion_outbox WHERE id = '{outbox_id}';""") == "PUBLISHED")
+    wait_for("J2 publisher duplicate consumption", lambda: consumer_caught_up(
+        f"relayforge-router-events-{env['DELIVERY_SHARD_ID']}",
+        "relayforge.event.accepted.v1"))
+    assert query(f"""SELECT count(*) FROM deliveries WHERE organization_id = '{organization}'
+        AND event_id = '{event_id}';""") == "1"
+    assert query(f"""SELECT count(*) FROM delivery_outbox WHERE delivery_id = '{delivery_id}'
+        AND message_type = 'delivery.ready.v1';""") == "1"
+    wait_for("J2 publisher delivery", lambda: query(f"""SELECT status FROM deliveries
+        WHERE id = '{delivery_id}';""") == "SUCCEEDED")
+    assert query(f"""SELECT count(*) FROM delivery_attempts WHERE delivery_id = '{delivery_id}'
+        AND outcome = 'SUCCEEDED';""") == "1"
+    status, received = post(simulator, "/__admin/requests/find", {
+        "method": "POST", "url": hook_path,
+        "bodyPatterns": [{"contains": delivery_id}]}, {})
+    assert status == 200 and len(received["requests"]) == 1
+    wait_for("J2 publisher analytics", lambda: clickhouse(f"""
+        SELECT count() FROM relayforge_analytics.delivery_facts FINAL
+        WHERE organization_id = '{organization}' AND event_id = '{event_id}'
+          AND fact_type = 'event.accepted'""") == "1" and clickhouse(f"""
+        SELECT count() FROM relayforge_analytics.delivery_facts FINAL
+        WHERE organization_id = '{organization}' AND delivery_id = '{delivery_id}'
+          AND fact_type = 'delivery.succeeded'""") == "1")
+    print("J2 publisher replay after Kafka ack kept one delivery and one receiver call")
+
+
 def main():
     env = settings()
     control = f"http://127.0.0.1:{env['CONTROL_API_HOST_PORT']}"
@@ -277,6 +332,8 @@ def main():
     status, detail = get(delivery_api, "/v1/deliveries/" + delivery_id, bearer)
     assert status == 200 and detail["data"]["delivery"]["status"] == "SUCCEEDED"
     print("J2 duplicate API, accepted Kafka, and ready Kafka messages had one external effect")
+    publisher_ack_recovery(ingestion, simulator, env, bearer, organization,
+                           event_type, hook_path)
 
     for case, response, first_status, retry in (
             ("400", {"status": 400}, 400, False),
