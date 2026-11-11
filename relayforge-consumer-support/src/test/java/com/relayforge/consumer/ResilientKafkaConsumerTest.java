@@ -3,6 +3,8 @@ package com.relayforge.consumer;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.atLeast;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -19,6 +21,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
@@ -89,6 +92,42 @@ class ResilientKafkaConsumerTest {
             assertThat(commits.getValue().get(PARTITION).offset()).isEqualTo(2);
         } finally {
             releaseFirst.countDown();
+            loop.close();
+        }
+    }
+
+    @Test
+    void continuesPollingWhileSlowHandlerKeepsPartitionPaused() throws Exception {
+        Consumer<String, String> consumer = mockConsumer(records(validRecord(0)));
+        AtomicBoolean paused = new AtomicBoolean();
+        when(consumer.paused()).thenAnswer(ignored -> paused.get() ? Set.of(PARTITION) : Set.of());
+        doAnswer(ignored -> {
+            paused.set(true);
+            return null;
+        }).when(consumer).pause(any());
+        doAnswer(ignored -> {
+            paused.set(false);
+            return null;
+        }).when(consumer).resume(any());
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ResilientKafkaConsumer loop = loop(consumer, mockProducer(), ignored -> {
+            entered.countDown();
+            release.await();
+        }, 1);
+        try {
+            loop.runOnce();
+            assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(paused).isTrue();
+            loop.runOnce();
+            loop.runOnce();
+            verify(consumer, atLeast(3)).poll(any(Duration.class));
+            verify(consumer, times(0)).commitSync(any(Map.class), any(Duration.class));
+            release.countDown();
+            awaitCommit(loop, consumer);
+            assertThat(paused).isFalse();
+        } finally {
+            release.countDown();
             loop.close();
         }
     }
