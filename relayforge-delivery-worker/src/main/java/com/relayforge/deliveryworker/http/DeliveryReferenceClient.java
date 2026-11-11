@@ -36,7 +36,8 @@ public final class DeliveryReferenceClient {
         Objects.requireNonNull(endpointId);
         URI target = control.resolve("/internal/v1/organizations/" + organizationId
                 + "/endpoints/" + endpointId + "/delivery");
-        return fetch(target, "X-RelayForge-Delivery-Config-Credential", configCredential, 65536);
+        return fetch(target, "X-RelayForge-Delivery-Config-Credential", configCredential,
+                65536, true);
     }
 
     public JsonNode payload(UUID organizationId, String locator) throws IOException {
@@ -46,16 +47,21 @@ public final class DeliveryReferenceClient {
         }
         URI target = ingestion.resolve("/internal/v1/events/" + locator
                 + "/payload?organization_id=" + organizationId);
-        return fetch(target, "X-RelayForge-Delivery-Payload-Credential", payloadCredential, 300000);
+        return fetch(target, "X-RelayForge-Delivery-Payload-Credential", payloadCredential,
+                300000, false);
     }
 
-    private JsonNode fetch(URI target, String header, String credential, int maximum) throws IOException {
+    private JsonNode fetch(URI target, String header, String credential, int maximum,
+                           boolean endpoint) throws IOException {
         HttpRequest request = HttpRequest.newBuilder(target).timeout(Duration.ofSeconds(5))
                 .header(header, credential).GET().build();
         try {
             HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
             byte[] body;
             try (InputStream stream = response.body()) {
+                if (endpoint && response.statusCode() == 404) {
+                    throw new EndpointNotActiveException();
+                }
                 body = stream.readNBytes(maximum + 1);
             }
             if (response.statusCode() != 200 || body.length > maximum
@@ -90,5 +96,11 @@ public final class DeliveryReferenceClient {
             throw new IllegalStateException("Delivery reference credential is unavailable");
         }
         return value;
+    }
+
+    public static final class EndpointNotActiveException extends IOException {
+        public EndpointNotActiveException() {
+            super("Endpoint is unavailable for delivery");
+        }
     }
 }

@@ -65,6 +65,15 @@ public final class DeliveryAttemptService {
     public boolean rejectUnclaimed(UUID deliveryId, String errorCode) {
         Objects.requireNonNull(deliveryId);
         validateErrorCode(errorCode);
+        return finishUnclaimed(deliveryId, "DEAD_LETTERED", errorCode);
+    }
+
+    public boolean cancelUnclaimed(UUID deliveryId) {
+        Objects.requireNonNull(deliveryId);
+        return finishUnclaimed(deliveryId, "CANCELLED", "ENDPOINT_DISABLED");
+    }
+
+    private boolean finishUnclaimed(UUID deliveryId, String outcome, String errorCode) {
         return Boolean.TRUE.equals(transactions.execute(status -> {
             var rows = jdbc.query("""
                     SELECT work.accepted_day, work.organization_id
@@ -79,7 +88,7 @@ public final class DeliveryAttemptService {
             if (rows.size() != 1) {
                 return false;
             }
-            markRejected(rows.getFirst(), deliveryId, errorCode);
+            markTerminal(rows.getFirst(), deliveryId, outcome, errorCode);
             jdbc.update("DELETE FROM delivery_work WHERE delivery_id = ?", deliveryId);
             return true;
         }));
@@ -88,6 +97,15 @@ public final class DeliveryAttemptService {
     public boolean rejectClaimed(DeliveryClaimService.Lease lease, String errorCode) {
         Objects.requireNonNull(lease);
         validateErrorCode(errorCode);
+        return finishClaimed(lease, "DEAD_LETTERED", errorCode);
+    }
+
+    public boolean cancelClaimed(DeliveryClaimService.Lease lease) {
+        Objects.requireNonNull(lease);
+        return finishClaimed(lease, "CANCELLED", "ENDPOINT_DISABLED");
+    }
+
+    private boolean finishClaimed(DeliveryClaimService.Lease lease, String outcome, String errorCode) {
         return Boolean.TRUE.equals(transactions.execute(status -> {
             var rows = jdbc.query("""
                     SELECT work.accepted_day, work.organization_id
@@ -107,21 +125,21 @@ public final class DeliveryAttemptService {
             if (rows.size() != 1) {
                 return false;
             }
-            markRejected(rows.getFirst(), lease.deliveryId(), errorCode);
+            markTerminal(rows.getFirst(), lease.deliveryId(), outcome, errorCode);
             jdbc.update("DELETE FROM delivery_work WHERE delivery_id = ? AND lease_token = ?",
                     lease.deliveryId(), lease.token());
             return true;
         }));
     }
 
-    private void markRejected(Rejected row, UUID deliveryId, String errorCode) {
+    private void markTerminal(Rejected row, UUID deliveryId, String outcome, String errorCode) {
         jdbc.update("""
-                UPDATE deliveries SET status = 'DEAD_LETTERED', last_error_code = ?,
+                UPDATE deliveries SET status = ?, last_error_code = ?,
                     lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
                     processing_deadline_at = NULL, completed_at = clock_timestamp(),
                     updated_at = clock_timestamp(), version = version + 1
                 WHERE accepted_day = ? AND id = ? AND organization_id = ?
-                """, errorCode, row.day(), deliveryId, row.organizationId());
+                """, outcome, errorCode, row.day(), deliveryId, row.organizationId());
     }
 
     private void validateErrorCode(String errorCode) {

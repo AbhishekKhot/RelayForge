@@ -160,6 +160,7 @@ def verify():
     run(["python3", "scripts/verify-j1.py"])
     run(["python3", "scripts/verify-j2.py"])
     run(["python3", "scripts/verify-e1.py"])
+    run(["python3", "scripts/verify-b3-worker.py"])
     run(["python3", "scripts/verify-e2.py"])
     run(["python3", "scripts/verify-g1.py"])
     run(["python3", "scripts/verify-g2.py"])

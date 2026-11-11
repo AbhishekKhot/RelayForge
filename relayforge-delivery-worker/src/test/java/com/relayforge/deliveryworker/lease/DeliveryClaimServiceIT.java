@@ -317,6 +317,34 @@ class DeliveryClaimServiceIT {
                 Integer.class, delivery)).isZero();
     }
 
+    @Test
+    void cancelsDisabledEndpointBeforeClaimWithoutCreatingAttempt() {
+        UUID delivery = due(UUID.randomUUID());
+        assertThat(attempts.cancelUnclaimed(delivery)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT status FROM deliveries WHERE id = ?",
+                String.class, delivery)).isEqualTo("CANCELLED");
+        assertThat(jdbc.queryForObject("SELECT last_error_code FROM deliveries WHERE id = ?",
+                String.class, delivery)).isEqualTo("ENDPOINT_DISABLED");
+        assertThat(jdbc.queryForObject("SELECT attempt_count FROM deliveries WHERE id = ?",
+                Integer.class, delivery)).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_work WHERE delivery_id = ?",
+                Integer.class, delivery)).isZero();
+        assertThat(attempts.cancelUnclaimed(delivery)).isFalse();
+    }
+
+    @Test
+    void cancelsDisabledEndpointOnlyForCurrentLease() {
+        UUID delivery = due(UUID.randomUUID());
+        DeliveryClaimService.Lease lease = claims.claim(delivery, "worker-current", 2, 20)
+                .orElseThrow();
+        assertThat(attempts.cancelClaimed(lease)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT status FROM deliveries WHERE id = ?",
+                String.class, delivery)).isEqualTo("CANCELLED");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM delivery_work WHERE delivery_id = ?",
+                Integer.class, delivery)).isZero();
+        assertThat(attempts.cancelClaimed(lease)).isFalse();
+    }
+
     private static UUID due(UUID endpoint) {
         return due(endpoint, UUID.randomUUID());
     }
