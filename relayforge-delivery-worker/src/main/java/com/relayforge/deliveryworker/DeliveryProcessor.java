@@ -120,6 +120,9 @@ public final class DeliveryProcessor implements AutoCloseable {
         JsonNode endpoint;
         try {
             endpoint = references.endpoint(candidate.organizationId(), candidate.endpointId());
+        } catch (DeliveryReferenceClient.EndpointNotActiveException inactive) {
+            attempts.cancelUnclaimed(deliveryId);
+            return;
         } catch (IOException unavailable) {
             attempts.deferUnclaimed(deliveryId, clock.instant().plusSeconds(30));
             return;
@@ -188,8 +191,31 @@ public final class DeliveryProcessor implements AutoCloseable {
         }, 20, 20, TimeUnit.SECONDS);
         try {
             String locator = attempts.eventLocator(lease);
-            endpoint = references.endpoint(lease.organizationId(), lease.endpointId());
+            try {
+                endpoint = references.endpoint(lease.organizationId(), lease.endpointId());
+            } catch (DeliveryReferenceClient.EndpointNotActiveException inactive) {
+                synchronized (active) {
+                    if (!lost.get()) {
+                        attempts.cancelClaimed(active.get());
+                    }
+                }
+                return;
+            } catch (IOException unavailable) {
+                synchronized (active) {
+                    if (!lost.get()) {
+                        attempts.deferClaimed(active.get(), clock.instant().plusSeconds(30),
+                                "CONFIGURATION_UNAVAILABLE");
+                    }
+                }
+                return;
+            }
             if (endpoint.path("version").asLong(-1) != configurationVersion) {
+                synchronized (active) {
+                    if (!lost.get()) {
+                        attempts.deferClaimed(active.get(), clock.instant().plusSeconds(30),
+                                "CONFIGURATION_CHANGED");
+                    }
+                }
                 return;
             }
             JsonNode payload = references.payload(lease.organizationId(), locator);
@@ -247,6 +273,34 @@ public final class DeliveryProcessor implements AutoCloseable {
                 synchronized (active) {
                     if (!lost.get()) {
                         attempts.rejectClaimed(active.get(), "CONFIGURATION_INVALID");
+                    }
+                }
+                return;
+            }
+            JsonNode current;
+            try {
+                current = references.endpoint(lease.organizationId(), lease.endpointId());
+            } catch (DeliveryReferenceClient.EndpointNotActiveException inactive) {
+                synchronized (active) {
+                    if (!lost.get()) {
+                        attempts.cancelClaimed(active.get());
+                    }
+                }
+                return;
+            } catch (IOException unavailable) {
+                synchronized (active) {
+                    if (!lost.get()) {
+                        attempts.deferClaimed(active.get(), clock.instant().plusSeconds(30),
+                                "CONFIGURATION_UNAVAILABLE");
+                    }
+                }
+                return;
+            }
+            if (current.path("version").asLong(-1) != configurationVersion) {
+                synchronized (active) {
+                    if (!lost.get()) {
+                        attempts.deferClaimed(active.get(), clock.instant().plusSeconds(30),
+                                "CONFIGURATION_CHANGED");
                     }
                 }
                 return;

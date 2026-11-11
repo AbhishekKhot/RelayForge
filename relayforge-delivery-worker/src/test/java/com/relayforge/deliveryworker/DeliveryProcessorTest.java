@@ -104,6 +104,83 @@ class DeliveryProcessorTest {
     }
 
     @Test
+    void cancelsWorkWhenEndpointIsDisabledBeforeClaim() throws Exception {
+        UUID deliveryId = UUID.randomUUID();
+        UUID organizationId = UUID.randomUUID();
+        UUID endpointId = UUID.randomUUID();
+        Instant now = Instant.parse("2026-11-02T10:00:00Z");
+        DeliveryClaimService claims = mock(DeliveryClaimService.class);
+        DeliveryAttemptService attempts = mock(DeliveryAttemptService.class);
+        DeliveryReferenceClient references = mock(DeliveryReferenceClient.class);
+        SafeWebhookClient client = mock(SafeWebhookClient.class);
+        when(attempts.candidate(deliveryId)).thenReturn(new DeliveryAttemptService.WorkReference(
+                organizationId, endpointId, 0, now.minusSeconds(60), now.plusSeconds(3600)));
+        when(references.endpoint(organizationId, endpointId)).thenThrow(
+                new DeliveryReferenceClient.EndpointNotActiveException());
+        DestinationPolicy policy = new DestinationPolicy(host -> new InetAddress[]{
+                InetAddress.getByName("127.0.0.1")}, true, URI.create("http://localhost:18080"));
+        try (DeliveryProcessor processor = new DeliveryProcessor(claims, attempts, references,
+                new WebhookRequestFactory(new ObjectMapper()), policy, client,
+                new RetryPolicy(Clock.fixed(now, ZoneOffset.UTC), () -> 0.5,
+                        new RetryPolicy.Settings(Duration.ofSeconds(1), Duration.ofMinutes(15),
+                                Duration.ofHours(1), Duration.ofHours(24))),
+                Clock.fixed(now, ZoneOffset.UTC), "worker-test")) {
+            processor.process(deliveryId);
+        }
+        verify(attempts).cancelUnclaimed(deliveryId);
+        verifyNoInteractions(claims, client);
+    }
+
+    @Test
+    void defersChangedConfigurationBeforeReservingWebhookAttempt() throws Exception {
+        UUID deliveryId = UUID.randomUUID();
+        UUID organizationId = UUID.randomUUID();
+        UUID endpointId = UUID.randomUUID();
+        Instant now = Instant.parse("2026-11-02T10:00:00Z");
+        DeliveryClaimService.Lease lease = new DeliveryClaimService.Lease(deliveryId,
+                LocalDate.parse("2026-11-02"), organizationId, endpointId, "worker-test",
+                UUID.randomUUID(), 2, now, now.plusSeconds(60), now.plusSeconds(240));
+        DeliveryClaimService claims = mock(DeliveryClaimService.class);
+        DeliveryAttemptService attempts = mock(DeliveryAttemptService.class);
+        DeliveryReferenceClient references = mock(DeliveryReferenceClient.class);
+        SafeWebhookClient client = mock(SafeWebhookClient.class);
+        ObjectMapper json = new ObjectMapper();
+        String secret = Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[32]);
+        String configuration = """
+                {"organization_id":"%s","endpoint_id":"%s","base_url":"http://localhost:18080",
+                 "path":"/hook","query_params":{},"headers":{},"version":%d,"timeout_ms":1000,
+                 "max_attempts":3,"max_concurrency":2,"organization_concurrency_limit":100,
+                 "authentication":{"type":"NONE"},"signing_secret":"%s"}
+                """;
+        when(attempts.candidate(deliveryId)).thenReturn(new DeliveryAttemptService.WorkReference(
+                organizationId, endpointId, 0, now.minusSeconds(60), now.plusSeconds(3600)));
+        when(claims.claim(deliveryId, "worker-test", 2, 100, 200)).thenReturn(Optional.of(lease));
+        when(attempts.eventLocator(lease)).thenReturn("evt_test");
+        when(references.endpoint(organizationId, endpointId)).thenReturn(
+                json.readTree(configuration.formatted(organizationId, endpointId, 1, secret)),
+                json.readTree(configuration.formatted(organizationId, endpointId, 1, secret)),
+                json.readTree(configuration.formatted(organizationId, endpointId, 2, secret)));
+        when(references.payload(organizationId, "evt_test")).thenReturn(json.readTree("""
+                {"organization_id":"%s","locator":"evt_test","event_type":"test.event",
+                 "payload":{"key":"value"}}
+                """.formatted(organizationId)));
+        DestinationPolicy policy = new DestinationPolicy(host -> new InetAddress[]{
+                InetAddress.getByName("127.0.0.1")}, true, URI.create("http://localhost:18080"));
+        try (DeliveryProcessor processor = new DeliveryProcessor(claims, attempts, references,
+                new WebhookRequestFactory(json), policy, client,
+                new RetryPolicy(Clock.fixed(now, ZoneOffset.UTC), () -> 0.5,
+                        new RetryPolicy.Settings(Duration.ofSeconds(1), Duration.ofMinutes(15),
+                                Duration.ofHours(1), Duration.ofHours(24))),
+                Clock.fixed(now, ZoneOffset.UTC), "worker-test")) {
+            processor.process(deliveryId);
+        }
+        verify(attempts).deferClaimed(lease, now.plusSeconds(30), "CONFIGURATION_CHANGED");
+        verify(attempts, org.mockito.Mockito.never()).reserve(any(),
+                org.mockito.ArgumentMatchers.anyInt());
+        verifyNoInteractions(client);
+    }
+
+    @Test
     void defersEligibleWorkWhenConcurrencyCapRejectsClaim() throws Exception {
         UUID deliveryId = UUID.randomUUID();
         UUID organizationId = UUID.randomUUID();
