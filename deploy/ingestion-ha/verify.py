@@ -3,6 +3,7 @@
 import json
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -61,6 +62,129 @@ def count(table, organization_id, status=None):
                        f"{status_filter};\n",
                  capture_output=True)
     return int(result.stdout.strip())
+
+
+def primary_sql(statement):
+    result = run(HA + ["exec", "-T", "ingestion-primary", "sh", "-c",
+                       'PGPASSWORD="$POSTGRES_PASSWORD" psql -qAt -v ON_ERROR_STOP=1 '
+                       '-U "$POSTGRES_USER" -d relayforge_ingestion'],
+                 input=statement + "\n", capture_output=True)
+    return result.stdout.strip()
+
+
+def verify_unknown_commit_retry(ingestion, bearer, organization_id):
+    event_type = "acceptance.ha.commit-timeout"
+    key = "ha-commit-" + uuid4().hex
+    body = {"event_type": event_type, "schema_version": 1,
+            "data": {"commit_timeout": key}}
+    primary_sql("""
+        CREATE FUNCTION acceptance_commit_gate() RETURNS trigger LANGUAGE plpgsql AS $gate$
+        BEGIN
+            IF NEW.event_type = 'acceptance.ha.commit-timeout' THEN
+                PERFORM pg_advisory_xact_lock(702, 43);
+            END IF;
+            RETURN NEW;
+        END $gate$;
+        CREATE TRIGGER acceptance_commit_gate BEFORE INSERT ON events
+            FOR EACH ROW EXECUTE FUNCTION acceptance_commit_gate();
+    """)
+    holder = None
+    standby_stopped = False
+    try:
+        holder = subprocess.Popen(HA + ["exec", "-T", "ingestion-primary", "sh", "-c",
+                'PGAPPNAME=relayforge_ha_commit_lock PGPASSWORD="$POSTGRES_PASSWORD" '
+                'psql -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" '
+                '-d relayforge_ingestion -c '
+                '"SELECT pg_advisory_lock(702, 43); SELECT pg_sleep(30)"'],
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        for _ in range(50):
+            held = primary_sql("""
+                SELECT count(*) FROM pg_locks locks JOIN pg_stat_activity activity
+                    ON activity.pid = locks.pid
+                WHERE activity.application_name = 'relayforge_ha_commit_lock'
+                    AND locks.locktype = 'advisory' AND locks.granted;
+            """)
+            if held == "1":
+                break
+            assert holder.poll() is None, "Commit gate session exited before acquiring its lock"
+            time.sleep(0.2)
+        else:
+            raise AssertionError("Commit gate did not acquire its lock")
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            request = executor.submit(post, ingestion, "/v1/events", body,
+                                      {**bearer, "Idempotency-Key": key})
+            for _ in range(40):
+                request_pid = primary_sql("""
+                    SELECT pid FROM pg_stat_activity
+                    WHERE wait_event_type = 'Lock' AND wait_event = 'advisory'
+                        AND query LIKE '%INSERT INTO events%';
+                """)
+                if request_pid:
+                    break
+                assert not request.done(), "Event request ended before the commit gate"
+                time.sleep(0.2)
+            else:
+                raise AssertionError("Event request did not reach the commit gate")
+
+            run(HA + ["stop", "-t", "1", "ingestion-standby"])
+            standby_stopped = True
+            assert primary_sql("SELECT count(*) FROM pg_stat_replication;") == "0"
+            primary_sql("""
+                SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+                WHERE application_name = 'relayforge_ha_commit_lock';
+            """)
+            for _ in range(40):
+                waiting = primary_sql(f"""
+                    SELECT count(*) FROM pg_stat_activity
+                    WHERE pid = {int(request_pid)} AND wait_event_type = 'IPC'
+                        AND wait_event = 'SyncRep';
+                """)
+                if waiting == "1":
+                    break
+                assert not request.done(), "Event request ended before synchronous commit wait"
+                time.sleep(0.2)
+            else:
+                raise AssertionError("Event commit did not wait for standby confirmation")
+            status, failure = request.result(timeout=20)
+            assert status == 503, (status, failure)
+
+        run(HA + ["start", "ingestion-standby"])
+        standby_stopped = False
+        wait_healthy("ingestion-standby")
+        for _ in range(30):
+            status, accepted = post(ingestion, "/v1/events", body,
+                                    {**bearer, "Idempotency-Key": key})
+            if status == 202:
+                break
+            assert status == 503, (status, accepted)
+            time.sleep(2)
+        assert status == 202, (status, accepted)
+        status, repeated = post(ingestion, "/v1/events", body,
+                                {**bearer, "Idempotency-Key": key})
+        assert status == 202 and repeated["data"]["event_id"] == accepted["data"]["event_id"]
+        assert primary_sql("""
+            SELECT count(*) || ':' || count(event.id) || ':' || count(outbox.id)
+            FROM idempotency_registry registry
+            LEFT JOIN events event ON event.accepted_day = registry.accepted_day
+                AND event.id = registry.event_id
+            LEFT JOIN ingestion_outbox outbox ON outbox.event_id = registry.event_id
+                AND outbox.message_type = 'event.accepted.v1'
+            WHERE registry.organization_id = '%s' AND registry.idempotency_key = '%s';
+        """ % (organization_id, key)) == "1:1:1"
+        print("C1 in-flight synchronous commit timeout and same-key retry passed")
+    finally:
+        if holder is not None and holder.poll() is None:
+            primary_sql("""
+                SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+                WHERE application_name = 'relayforge_ha_commit_lock';
+            """)
+            holder.communicate(timeout=10)
+        if standby_stopped:
+            run(HA + ["start", "ingestion-standby"])
+            wait_healthy("ingestion-standby")
+        primary_sql("DROP TRIGGER acceptance_commit_gate ON events;"
+                    "DROP FUNCTION acceptance_commit_gate();")
 
 
 def accepted_topic_end_offset():
@@ -168,6 +292,7 @@ def verify():
     run(["python3", "scripts/verify-h3.py"])
     run(["python3", "scripts/verify-i1.py"])
     run(["python3", "scripts/verify-i2.py"])
+    verify_unknown_commit_retry(ingestion, bearer, organization_id)
     print("C1 HA event acceptance, idempotency, and standby-loss checks passed")
 
 
