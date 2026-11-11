@@ -210,10 +210,12 @@ public class DeliveryLeaseConfiguration {
             DeliveryReferenceClient references, DestinationPolicy policy,
             SafeWebhookClient client, RetryPolicy retryPolicy, ObjectMapper json,
             AuthenticationStrategyResolver authentication, DeliveryQuotaGate quotaGate,
-            DeliveryOutcomeRecorder outcomes) {
+            DeliveryOutcomeRecorder outcomes, Environment environment) {
+        int platformLimit = environment.getProperty(
+                "relayforge.delivery.platform-concurrency-limit", Integer.class, 200);
         return new DeliveryProcessor(claims, attempts, references, new WebhookRequestFactory(json),
                 policy, client, retryPolicy, authentication, quotaGate, Clock.systemUTC(),
-                "worker-" + java.util.UUID.randomUUID(), outcomes);
+                "worker-" + java.util.UUID.randomUUID(), outcomes, platformLimit);
     }
 
     @Bean
