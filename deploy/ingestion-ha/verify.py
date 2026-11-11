@@ -63,6 +63,17 @@ def count(table, organization_id, status=None):
     return int(result.stdout.strip())
 
 
+def accepted_topic_end_offset():
+    topic = "relayforge.event.accepted.v1"
+    output = run(HA + ["exec", "-T", "kafka", "/opt/kafka/bin/kafka-get-offsets.sh",
+                       "--bootstrap-server", "kafka:9092", "--topic", topic],
+                 capture_output=True).stdout.strip()
+    offsets = [int(line.rsplit(":", 1)[1]) for line in output.splitlines()
+               if line.startswith(topic + ":0:")]
+    assert len(offsets) == 1, output
+    return offsets[0]
+
+
 def verify():
     env = dict(line.split("=", 1) for line in Path(".env").read_text().splitlines()
                if line and not line.startswith("#") and "=" in line)
@@ -84,6 +95,7 @@ def verify():
     wait_healthy("ingestion-primary")
     wait_healthy("ingestion-standby")
     wait_healthy("ingestion")
+    accepted_offset = accepted_topic_end_offset()
     status, first = post(ingestion, "/v1/events", body,
                          {**bearer, "Idempotency-Key": key})
     assert status == 202, (status, first)
@@ -118,7 +130,8 @@ def verify():
                         "/opt/kafka/bin/kafka-console-consumer.sh",
                         "--bootstrap-server", "kafka:9092",
                         "--topic", "relayforge.event.accepted.v1",
-                        "--from-beginning", "--max-messages", "1", "--timeout-ms", "10000"],
+                        "--partition", "0", "--offset", str(accepted_offset),
+                        "--max-messages", "1", "--timeout-ms", "10000"],
                   capture_output=True).stdout.strip()
     envelope = json.loads(message)
     assert envelope["message_id"].startswith("msg_")

@@ -4,9 +4,6 @@ import com.relayforge.contracts.EnvelopeValidator;
 import com.relayforge.contracts.InvalidEnvelopeException;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.Collection;
@@ -30,7 +27,6 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.producer.Producer;
-import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.WakeupException;
 
@@ -180,24 +176,8 @@ public final class ResilientKafkaConsumer implements AutoCloseable {
 
     private void publishQuarantine(ConsumerRecord<String, String> source, String reason)
             throws InterruptedException, ExecutionException, java.util.concurrent.TimeoutException {
-        String identity = source.topic() + ":" + source.partition() + ":" + source.offset();
-        String body = "{\"source_topic\":\"" + source.topic() + "\",\"source_partition\":"
-                + source.partition() + ",\"source_offset\":" + source.offset()
-                + ",\"quarantine_id\":\"" + hash(identity) + "\",\"reason\":\""
-                + reason + "\",\"value_sha256\":\"" + hash(source.value()) + "\"}";
-        quarantineProducer.send(new ProducerRecord<>(source.topic() + ".quarantine",
-                        hash(identity), body))
+        quarantineProducer.send(QuarantineRecord.from(source, reason))
                 .get(options.quarantineTimeout().toMillis(), TimeUnit.MILLISECONDS);
-    }
-
-    private static String hash(String value) {
-        try {
-            byte[] bytes = MessageDigest.getInstance("SHA-256").digest(
-                    (value == null ? "" : value).getBytes(StandardCharsets.UTF_8));
-            return java.util.HexFormat.of().formatHex(bytes);
-        } catch (NoSuchAlgorithmException unavailable) {
-            throw new IllegalStateException("SHA-256 unavailable", unavailable);
-        }
     }
 
     private void drainCompletions() {
