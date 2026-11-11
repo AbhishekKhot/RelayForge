@@ -104,6 +104,41 @@ class DeliveryProcessorTest {
     }
 
     @Test
+    void defersEligibleWorkWhenConcurrencyCapRejectsClaim() throws Exception {
+        UUID deliveryId = UUID.randomUUID();
+        UUID organizationId = UUID.randomUUID();
+        UUID endpointId = UUID.randomUUID();
+        Instant now = Instant.parse("2026-11-02T10:00:00Z");
+        DeliveryClaimService claims = mock(DeliveryClaimService.class);
+        DeliveryAttemptService attempts = mock(DeliveryAttemptService.class);
+        DeliveryReferenceClient references = mock(DeliveryReferenceClient.class);
+        SafeWebhookClient client = mock(SafeWebhookClient.class);
+        when(attempts.candidate(deliveryId)).thenReturn(new DeliveryAttemptService.WorkReference(
+                organizationId, endpointId, 0, now.minusSeconds(60), now.plusSeconds(3600)));
+        when(references.endpoint(organizationId, endpointId)).thenReturn(new ObjectMapper().readTree("""
+                {"max_concurrency":2,"organization_concurrency_limit":10,
+                 "max_attempts":3,"version":1}
+                """));
+        DestinationPolicy policy = new DestinationPolicy(host -> new InetAddress[]{
+                InetAddress.getByName("127.0.0.1")}, true, URI.create("http://localhost:18080"));
+        try (DeliveryProcessor processor = new DeliveryProcessor(claims, attempts, references,
+                new WebhookRequestFactory(new ObjectMapper()), policy, client,
+                new RetryPolicy(Clock.fixed(now, ZoneOffset.UTC), () -> 0.5,
+                        new RetryPolicy.Settings(Duration.ofSeconds(1), Duration.ofMinutes(15),
+                                Duration.ofHours(1), Duration.ofHours(24))),
+                new AuthenticationStrategyResolver(new StaticAuthenticationStrategy(),
+                        (configuration, lease, leaseValid) -> {
+                            throw new IllegalStateException("Unused token strategy");
+                        }), () -> true, Clock.fixed(now, ZoneOffset.UTC), "worker-test",
+                (outcome, elapsed) -> { }, 4)) {
+            processor.process(deliveryId);
+        }
+        verify(claims).claim(deliveryId, "worker-test", 2, 10, 4);
+        verify(attempts).deferUnclaimed(deliveryId, now.plusSeconds(30));
+        verifyNoInteractions(client);
+    }
+
+    @Test
     void usesRetryAfterFor429AndTerminates400() throws Exception {
         assertOutcome(429, "120", Instant.parse("2026-11-02T10:02:00Z"),
                 "HTTP_RETRYABLE");

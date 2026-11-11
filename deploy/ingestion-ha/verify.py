@@ -159,6 +159,7 @@ def verify():
     verify_routing(env, control, ingestion)
     run(["python3", "scripts/verify-j1.py"])
     run(["python3", "scripts/verify-j2.py"])
+    run(["python3", "scripts/verify-e1.py"])
     run(["python3", "scripts/verify-e2.py"])
     run(["python3", "scripts/verify-g1.py"])
     run(["python3", "scripts/verify-g2.py"])

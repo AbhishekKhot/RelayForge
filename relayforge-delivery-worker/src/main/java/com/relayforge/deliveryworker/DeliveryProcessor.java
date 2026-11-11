@@ -46,6 +46,7 @@ public final class DeliveryProcessor implements AutoCloseable {
     private final DeliveryQuotaGate quotaGate;
     private final Clock clock;
     private final String workerId;
+    private final int platformConcurrencyLimit;
     private final DeliveryOutcomeRecorder outcomes;
     private final java.util.concurrent.ScheduledExecutorService renewals =
             Executors.newScheduledThreadPool(2);
@@ -83,6 +84,19 @@ public final class DeliveryProcessor implements AutoCloseable {
             DestinationPolicy policy, SafeWebhookClient client, RetryPolicy retryPolicy,
             AuthenticationStrategyResolver authentication, DeliveryQuotaGate quotaGate,
             Clock clock, String workerId, DeliveryOutcomeRecorder outcomes) {
+        this(claims, attempts, references, requests, policy, client, retryPolicy,
+                authentication, quotaGate, clock, workerId, outcomes, 200);
+    }
+
+    public DeliveryProcessor(DeliveryClaimService claims, DeliveryAttemptService attempts,
+            DeliveryReferenceClient references, WebhookRequestFactory requests,
+            DestinationPolicy policy, SafeWebhookClient client, RetryPolicy retryPolicy,
+            AuthenticationStrategyResolver authentication, DeliveryQuotaGate quotaGate,
+            Clock clock, String workerId, DeliveryOutcomeRecorder outcomes,
+            int platformConcurrencyLimit) {
+        if (platformConcurrencyLimit < 1 || platformConcurrencyLimit > 10000) {
+            throw new IllegalArgumentException("Invalid platform concurrency limit");
+        }
         this.claims = Objects.requireNonNull(claims);
         this.attempts = Objects.requireNonNull(attempts);
         this.references = Objects.requireNonNull(references);
@@ -95,6 +109,7 @@ public final class DeliveryProcessor implements AutoCloseable {
         this.clock = Objects.requireNonNull(clock);
         this.workerId = Objects.requireNonNull(workerId);
         this.outcomes = Objects.requireNonNull(outcomes);
+        this.platformConcurrencyLimit = platformConcurrencyLimit;
     }
 
     public void process(UUID deliveryId) {
@@ -140,13 +155,15 @@ public final class DeliveryProcessor implements AutoCloseable {
         }
         Optional<DeliveryClaimService.Lease> claimed;
         try {
-            claimed = claims.claim(deliveryId, workerId, concurrency, organizationConcurrency, 200);
+            claimed = claims.claim(deliveryId, workerId, concurrency, organizationConcurrency,
+                    platformConcurrencyLimit);
         } catch (RuntimeException failure) {
             quotaGate.release(candidate.organizationId(), permitId);
             throw failure;
         }
         if (claimed.isEmpty()) {
             quotaGate.release(candidate.organizationId(), permitId);
+            attempts.deferUnclaimed(deliveryId, clock.instant().plusSeconds(30));
             return;
         }
         DeliveryClaimService.Lease lease = claimed.get();
