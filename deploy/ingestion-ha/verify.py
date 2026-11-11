@@ -195,7 +195,9 @@ def verify_expired_lease_recovery():
     endpoint = uuid4()
     delivery = uuid4()
     token = uuid4()
-    delivery_sql("""BEGIN;
+    run(HA + ["stop", "delivery-publisher", "retry-scheduler"])
+    try:
+        delivery_sql("""BEGIN;
         INSERT INTO routing_progress (accepted_day, event_id, organization_id,
             event_accepted_at, ingestion_shard_id, delivery_shard_id, status)
         VALUES (current_date, '%s', '%s',
@@ -215,16 +217,18 @@ def verify_expired_lease_recovery():
             clock_timestamp() + interval '3 minutes', 1);
         COMMIT;""" % (event, organization_id, delivery, organization_id, event,
                       endpoint, token, delivery, organization_id, endpoint, token))
-    for _ in range(30):
-        state = delivery_sql("""SELECT work.status || ':' || delivery.status || ':' ||
+        for _ in range(30):
+            state = delivery_sql("""SELECT work.status || ':' || delivery.status || ':' ||
             (work.lease_token IS NULL)::text || ':' || (delivery.lease_token IS NULL)::text
             FROM delivery_work work JOIN deliveries delivery
               ON delivery.accepted_day = work.accepted_day AND delivery.id = work.delivery_id
             WHERE work.delivery_id = '%s';""" % delivery)
-        if state == "PENDING:PENDING:true:true":
-            return
-        time.sleep(2)
-    raise AssertionError("Expired delivery lease was not recovered")
+            if state == "PENDING:PENDING:true:true":
+                return
+            time.sleep(2)
+        raise AssertionError("Expired delivery lease was not recovered")
+    finally:
+        run(HA + ["start", "delivery-publisher", "retry-scheduler"])
 
 
 def wait_routing(ingestion, locator, bearer, expected_status, expected_count):
