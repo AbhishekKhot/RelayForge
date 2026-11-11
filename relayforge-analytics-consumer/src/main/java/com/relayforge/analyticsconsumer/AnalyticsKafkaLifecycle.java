@@ -2,6 +2,7 @@ package com.relayforge.analyticsconsumer;
 
 import com.relayforge.apisupport.ReadinessProbe;
 import com.relayforge.consumer.KafkaConsumerSettings;
+import com.relayforge.consumer.QuarantineRecord;
 import com.relayforge.contracts.EnvelopeValidator;
 import com.relayforge.contracts.InvalidEnvelopeException;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -24,7 +25,6 @@ import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerConfig;
-import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.WakeupException;
 import org.apache.kafka.common.serialization.StringSerializer;
@@ -149,11 +149,7 @@ public final class AnalyticsKafkaLifecycle implements SmartLifecycle, ReadinessP
 
     private void quarantine(ConsumerRecord<String, String> record)
             throws InterruptedException, ExecutionException, TimeoutException {
-        String identity = record.topic() + ':' + record.partition() + ':' + record.offset();
-        String body = "{\"source_topic\":\"" + TOPIC + "\",\"source_partition\":"
-                + record.partition() + ",\"source_offset\":" + record.offset()
-                + ",\"reason\":\"INVALID_FACT\"}";
-        quarantine.send(new ProducerRecord<>(TOPIC + ".quarantine", identity, body))
+        quarantine.send(QuarantineRecord.from(record, "INVALID_FACT"))
                 .get(3, TimeUnit.SECONDS);
     }
 

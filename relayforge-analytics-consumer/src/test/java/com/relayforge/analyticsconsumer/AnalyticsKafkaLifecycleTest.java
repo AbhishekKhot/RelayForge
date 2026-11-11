@@ -9,6 +9,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.relayforge.contracts.EnvelopeValidator;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -22,6 +25,37 @@ import org.junit.jupiter.api.Test;
 
 class AnalyticsKafkaLifecycleTest {
     private static final String TOPIC = "relayforge.analytics.delivery-facts.v1";
+
+    @Test
+    void quarantinesMalformedFactWithOnlySourceMetadata() throws Exception {
+        var consumer = new MockConsumer<String, String>(OffsetResetStrategy.EARLIEST);
+        var producer = new MockProducer<String, String>(true, new StringSerializer(),
+                new StringSerializer());
+        var lifecycle = new AnalyticsKafkaLifecycle(consumer, producer,
+                new EnvelopeValidator(new ObjectMapper()), mock(ClickHouseFactStore.class),
+                new SimpleMeterRegistry());
+        var partition = new TopicPartition(TOPIC, 0);
+        consumer.rebalance(List.of(partition));
+        consumer.updateBeginningOffsets(Map.of(partition, 0L));
+        String raw = "private-secret-invalid-json";
+        consumer.addRecord(new ConsumerRecord<>(TOPIC, 0, 0, "fact", raw));
+
+        lifecycle.runOnce();
+
+        assertThat(consumer.committed(partition).offset()).isEqualTo(1);
+        assertThat(producer.history()).hasSize(1);
+        var sent = producer.history().getFirst();
+        assertThat(sent.topic()).isEqualTo(TOPIC + ".quarantine");
+        var json = new ObjectMapper().readTree(sent.value());
+        assertThat(json.path("source_topic").asText()).isEqualTo(TOPIC);
+        assertThat(json.path("source_partition").asInt()).isZero();
+        assertThat(json.path("source_offset").asLong()).isZero();
+        assertThat(json.path("reason").asText()).isEqualTo("INVALID_FACT");
+        assertThat(json.path("value_sha256").asText()).isEqualTo(HexFormat.of().formatHex(
+                MessageDigest.getInstance("SHA-256").digest(raw.getBytes(StandardCharsets.UTF_8))));
+        assertThat(json.path("quarantine_id").asText()).isEqualTo(sent.key());
+        assertThat(sent.value()).doesNotContain(raw);
+    }
 
     @Test
     void commitsOnlyAfterClickHouseAcknowledgesFact() throws Exception {
