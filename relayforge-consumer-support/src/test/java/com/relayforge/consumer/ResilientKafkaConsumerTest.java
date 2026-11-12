@@ -86,7 +86,7 @@ class ResilientKafkaConsumerTest {
             verify(consumer, times(0)).commitSync(any(Map.class), any(Duration.class));
             releaseFirst.countDown();
             assertThat(firstDone.await(2, TimeUnit.SECONDS)).isTrue();
-            loop.runOnce();
+            awaitCommit(loop, consumer);
             ArgumentCaptor<Map<TopicPartition, OffsetAndMetadata>> commits = ArgumentCaptor.forClass(Map.class);
             verify(consumer).commitSync(commits.capture(), any(Duration.class));
             assertThat(commits.getValue().get(PARTITION).offset()).isEqualTo(2);

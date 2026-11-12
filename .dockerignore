@@ -1,5 +1,7 @@
 .git
 **/target
+**/__pycache__
+**/*.pyc
 .env
 .env.*
 AGENTS.md
