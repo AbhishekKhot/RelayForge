@@ -43,29 +43,29 @@ public class RelayForgeSettings {
     public Provisioning getProvisioning() { return provisioning; }
 
     public static class Database {
-        @NotBlank
-        private String url = "jdbc:postgresql://localhost:5432/relayforge";
+        @Pattern(regexp = ".*\\S.*")
+        private String url;
         public String getUrl() { return url; }
         public void setUrl(String url) { this.url = url; }
     }
 
     public static class Kafka {
-        @NotBlank
-        private String bootstrapServers = "localhost:9092";
+        @Pattern(regexp = ".*\\S.*")
+        private String bootstrapServers;
         public String getBootstrapServers() { return bootstrapServers; }
         public void setBootstrapServers(String bootstrapServers) { this.bootstrapServers = bootstrapServers; }
     }
 
     public static class Redis {
-        @NotBlank
-        private String uri = "redis://localhost:6379";
+        @Pattern(regexp = ".*\\S.*")
+        private String uri;
         public String getUri() { return uri; }
         public void setUri(String uri) { this.uri = uri; }
     }
 
     public static class ClickHouse {
-        @NotBlank
-        private String url = "http://localhost:8123";
+        @Pattern(regexp = ".*\\S.*")
+        private String url;
         public String getUrl() { return url; }
         public void setUrl(String url) { this.url = url; }
     }
