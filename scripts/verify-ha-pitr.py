@@ -20,7 +20,7 @@ TABLES = {
     "relayforge_control": {"organizations": 1, "endpoints": 1,
                            "subscriptions": 1, "control_outbox": 1},
     "relayforge_ingestion": {"idempotency_registry": 1, "events": 1,
-                             "ingestion_outbox": 1},
+                             "ingestion_outbox": 2},
     "relayforge_delivery": {"routing_progress": 1, "deliveries": 1,
                             "delivery_attempts": 1, "delivery_outbox": 2},
 }
