@@ -46,7 +46,9 @@ def main():
                    input="SELECT count(*) FROM pg_stat_replication "
                          "WHERE application_name = 'ingestion_standby' "
                          "AND sync_state = 'sync';\n").stdout.strip() == "1"
-        print("Documented HA Compose stack started healthy with synchronous standby")
+        subprocess.run(["python3", "scripts/verify-j1.py"], check=True,
+                       env={**environment, "COMPOSE_PROJECT_NAME": PROJECT}, timeout=300)
+        print("Documented HA Compose stack passed clean boot and end-to-end delivery")
     except (subprocess.CalledProcessError, AssertionError):
         print(run(COMPOSE + ["ps", "-a"]).stdout)
         raise
