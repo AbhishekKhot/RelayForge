@@ -131,8 +131,9 @@ def seed(prefix, base_url):
 def verify_rows(organization, expected):
     for database, tables in TABLES.items():
         statements = "\n".join("SELECT count(*) FROM " + table +
-                               " WHERE organization_id = '" + organization + "';"
-                               for table in tables)
+                               " WHERE " + ("id" if table == "organizations"
+                                           else "organization_id") + " = '" +
+                               organization + "';" for table in tables)
         counts = sql("restored", database, statements).splitlines()
         assert counts == [str(count if expected else 0) for count in tables.values()], \
             (database, counts)
