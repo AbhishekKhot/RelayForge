@@ -67,7 +67,7 @@ To discard disposable local data, add `-v` to `down`. This deletes the project's
 
 ## Local Scope
 
-The Compose stack runs on one host with one Kafka broker and one logical ingestion and delivery shard. PostgreSQL promotion and backup/WAL restore are tested as operator-controlled drills; production failover detection, routing, backup storage, and recovery policy are not supplied by this setup. Endpoint encryption uses local-only keys from `.env`. ClickHouse is a single-node instance. The normal, peak, and headroom figures above remain unverified until the deferred J3 load benchmarks; this local stack is for functional development and acceptance testing.
+The Compose stack runs on one host with one Kafka broker and one logical ingestion and delivery shard. Bucket moves are not enabled. PostgreSQL promotion and backup/WAL restore are tested as operator-controlled drills; automated production failover detection, write-endpoint switching after promotion, off-host backup storage, and a production recovery policy are not supplied by this setup. Endpoint encryption uses local-only keys from `.env`; production key management is deferred. ClickHouse is a single-node instance. The normal, peak, and headroom figures above remain unverified until the deferred J3 load benchmarks; this local stack is for functional development and acceptance testing.
 
 ## Project Folder Structure
 
