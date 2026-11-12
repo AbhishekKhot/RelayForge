@@ -21,6 +21,8 @@ jobs:
         run: mvn -B verify
       - name: Create local Docker environment
         run: python3 scripts/create-env.py
+      - name: Verify documented clean HA Compose setup
+        run: python3 scripts/verify-local-setup.py
       - name: Verify isolated PostgreSQL point-in-time restore
         run: python3 scripts/verify-ha-pitr.py
       - name: Verify clean Compose boot and recovery
