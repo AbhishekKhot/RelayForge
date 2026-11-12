@@ -21,6 +21,24 @@ class RelayForgeSettingsTest {
     }
 
     @Test
+    void leavesConnectionAddressesUnsetWithoutExternalConfiguration() {
+        context.run(result -> {
+            assertThat(result).hasNotFailed();
+            RelayForgeSettings settings = result.getBean(RelayForgeSettings.class);
+            assertThat(settings.getDatabase().getUrl()).isNull();
+            assertThat(settings.getKafka().getBootstrapServers()).isNull();
+            assertThat(settings.getRedis().getUri()).isNull();
+            assertThat(settings.getClickhouse().getUrl()).isNull();
+        });
+    }
+
+    @Test
+    void rejectsWhitespaceOnlyConnectionAddress() {
+        context.withPropertyValues("relayforge.database.url=   ")
+                .run(result -> assertThat(result).hasFailed());
+    }
+
+    @Test
     void rejectsUnsafeLimits() {
         context.withPropertyValues("relayforge.api.max-event-bytes=0")
                 .run(result -> assertThat(result).hasFailed());
