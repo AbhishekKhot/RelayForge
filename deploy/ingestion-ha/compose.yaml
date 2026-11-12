@@ -1,6 +1,7 @@
 services:
   ingestion-primary:
     image: ${POSTGRES_IMAGE:?Set POSTGRES_IMAGE in .env}
+    entrypoint: ["/bin/bash", "/opt/relayforge/primary-entrypoint.sh"]
     command: ["postgres", "-c", "wal_level=replica", "-c", "max_wal_senders=10", "-c", "max_replication_slots=10", "-c", "fsync=on"]
     environment:
       POSTGRES_USER: ${POSTGRES_SUPERUSER_USER:?Set POSTGRES_SUPERUSER_USER in .env}
@@ -13,6 +14,7 @@ services:
     volumes:
       - ingestion-primary-data:/var/lib/postgresql/data
       - ./deploy/ingestion-ha/01-init.sh:/docker-entrypoint-initdb.d/01-init.sh:ro
+      - ./deploy/ingestion-ha/primary-entrypoint.sh:/opt/relayforge/primary-entrypoint.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "PGPASSWORD=\"$${POSTGRES_PASSWORD}\" psql -U \"$${POSTGRES_USER}\" -d postgres -tAc 'SELECT 1' | grep -qx 1"]
       interval: 5s
