@@ -29,26 +29,47 @@ def inspect(service, field):
     return run(["docker", "inspect", "--format", field, container]).stdout.strip()
 
 
+def ingestion_sql(statement):
+    return run(COMPOSE + ["exec", "-T", "ingestion-primary", "sh", "-c",
+                          'PGPASSWORD="$POSTGRES_PASSWORD" psql -qAt '
+                          '-U "$POSTGRES_USER" -d relayforge_ingestion'],
+               input=statement + "\n").stdout.strip()
+
+
+def verify_stack():
+    for service in HEALTHY:
+        assert inspect(service, "{{.State.Health.Status}}") == "healthy", service
+    assert inspect("webhook-simulator", "{{.State.Running}}") == "true"
+    for service in COMPLETED:
+        assert inspect(service, "{{.State.ExitCode}}") == "0", service
+    assert ingestion_sql("SELECT count(*) FROM pg_stat_replication "
+                         "WHERE application_name = 'ingestion_standby' "
+                         "AND sync_state = 'sync';") == "1"
+
+
+def verify_delivery(environment):
+    subprocess.run(["python3", "scripts/verify-j1.py"], check=True,
+                   env={**environment, "COMPOSE_PROJECT_NAME": PROJECT}, timeout=300)
+
+
 def main():
     environment = {**os.environ, "COMPOSE_PARALLEL_LIMIT": "2"}
     try:
         run(COMPOSE + ["config", "--quiet"])
         run(COMPOSE + ["up", "-d", "--build", "--wait", "--wait-timeout", "600"],
             env=environment, timeout=1200)
-        for service in HEALTHY:
-            assert inspect(service, "{{.State.Health.Status}}") == "healthy", service
-        assert inspect("webhook-simulator", "{{.State.Running}}") == "true"
-        for service in COMPLETED:
-            assert inspect(service, "{{.State.ExitCode}}") == "0", service
-        assert run(COMPOSE + ["exec", "-T", "ingestion-primary", "sh", "-c",
-                              'PGPASSWORD="$POSTGRES_PASSWORD" psql -qAt '
-                              '-U "$POSTGRES_USER" -d relayforge_ingestion'],
-                   input="SELECT count(*) FROM pg_stat_replication "
-                         "WHERE application_name = 'ingestion_standby' "
-                         "AND sync_state = 'sync';\n").stdout.strip() == "1"
-        subprocess.run(["python3", "scripts/verify-j1.py"], check=True,
-                       env={**environment, "COMPOSE_PROJECT_NAME": PROJECT}, timeout=300)
-        print("Documented HA Compose stack passed clean boot and end-to-end delivery")
+        verify_stack()
+        verify_delivery(environment)
+        accepted = int(ingestion_sql("SELECT count(*) FROM events;"))
+        assert accepted > 0
+
+        run(COMPOSE + ["down"])
+        run(COMPOSE + ["up", "-d", "--wait", "--wait-timeout", "600"],
+            env=environment, timeout=900)
+        verify_stack()
+        assert int(ingestion_sql("SELECT count(*) FROM events;")) >= accepted
+        verify_delivery(environment)
+        print("Documented HA Compose clean boot, restart, and delivery passed")
     except (subprocess.CalledProcessError, AssertionError):
         print(run(COMPOSE + ["ps", "-a"]).stdout)
         raise
