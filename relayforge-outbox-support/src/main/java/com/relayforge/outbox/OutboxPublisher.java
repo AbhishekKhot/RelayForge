@@ -2,6 +2,7 @@ package com.relayforge.outbox;
 
 import java.time.Duration;
 import java.util.Objects;
+import java.util.function.LongSupplier;
 import java.util.random.RandomGenerator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,34 +10,52 @@ import org.slf4j.LoggerFactory;
 public final class OutboxPublisher {
     private static final Logger LOG = LoggerFactory.getLogger(OutboxPublisher.class);
     private static final long MAX_RETRY_MILLIS = 60000;
+    private static final long MAX_POLL_NANOS = Duration.ofSeconds(5).toNanos();
     private final OutboxRepository repository;
     private final OutboxTransport transport;
     private final OutboxEnvelope envelope;
     private final String workerId;
-    private final int batchSize;
+    private final int maxRowsPerPoll;
     private final Duration lease;
     private final RandomGenerator random;
+    private final LongSupplier monotonicNanos;
 
     public OutboxPublisher(OutboxRepository repository, OutboxTransport transport, OutboxEnvelope envelope,
-            String workerId, int batchSize, Duration lease, RandomGenerator random) {
+            String workerId, int maxRowsPerPoll, Duration lease, RandomGenerator random) {
+        this(repository, transport, envelope, workerId, maxRowsPerPoll, lease, random, System::nanoTime);
+    }
+
+    OutboxPublisher(OutboxRepository repository, OutboxTransport transport, OutboxEnvelope envelope,
+            String workerId, int maxRowsPerPoll, Duration lease, RandomGenerator random,
+            LongSupplier monotonicNanos) {
         this.repository = Objects.requireNonNull(repository);
         this.transport = Objects.requireNonNull(transport);
         this.envelope = Objects.requireNonNull(envelope);
         this.random = Objects.requireNonNull(random);
+        this.monotonicNanos = Objects.requireNonNull(monotonicNanos);
         if (workerId == null || workerId.isBlank() || workerId.length() > 160
-                || batchSize < 1 || batchSize > 100 || lease == null
+                || maxRowsPerPoll < 1 || maxRowsPerPoll > 100 || lease == null
                 || lease.compareTo(Duration.ofSeconds(10)) < 0
                 || lease.compareTo(Duration.ofMinutes(5)) > 0) {
             throw new IllegalArgumentException("Invalid publisher configuration");
         }
         this.workerId = workerId;
-        this.batchSize = batchSize;
+        this.maxRowsPerPoll = maxRowsPerPoll;
         this.lease = lease;
     }
 
     public int publishBatch() {
         int published = 0;
-        for (ClaimedOutboxRow row : repository.claim(workerId, batchSize, lease)) {
+        long started = monotonicNanos.getAsLong();
+        for (int attempted = 0; attempted < maxRowsPerPoll; attempted++) {
+            if (attempted > 0 && monotonicNanos.getAsLong() - started >= MAX_POLL_NANOS) {
+                break;
+            }
+            var rows = repository.claim(workerId, 1, lease);
+            if (rows.isEmpty()) {
+                break;
+            }
+            ClaimedOutboxRow row = rows.getFirst();
             String serialized;
             try {
                 serialized = envelope.encode(row);
