@@ -7,4 +7,7 @@
 AGENTS.md
 load-tests/*.credentials.json
 load-tests/results
+load-tests/benchmark*.py
+load-tests/run_diagnostics.py
+docs/benchmarks
 RelayForge_Project_Discussion_QA.md
