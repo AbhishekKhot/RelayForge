@@ -4,6 +4,8 @@
 *.iml
 .DS_Store
 __pycache__/
+load-tests/*.credentials.json
+load-tests/results/
 .env
 .env.*
 !.env.example

@@ -5,4 +5,6 @@
 .env
 .env.*
 AGENTS.md
+load-tests/*.credentials.json
+load-tests/results
 RelayForge_Project_Discussion_QA.md

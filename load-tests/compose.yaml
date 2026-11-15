@@ -1,0 +1,16 @@
+services:
+  load-receiver:
+    build:
+      context: .
+      dockerfile: load-tests/Dockerfile.receiver
+    environment:
+      PORT: "8080"
+      LOAD_RECEIVER_LATENCY_MS: ${LOAD_RECEIVER_LATENCY_MS:-0}
+      LOAD_RECEIVER_FAILURE_PERCENT: ${LOAD_RECEIVER_FAILURE_PERCENT:-0}
+    ports:
+      - "127.0.0.1:${LOAD_RECEIVER_HOST_PORT:-18085}:8080"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10

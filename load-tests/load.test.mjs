@@ -1,0 +1,131 @@
+import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { after, test } from 'node:test';
+import { once } from 'node:events';
+import { buildEventBody, runProducer } from './producer.mjs';
+import { createReceiver } from './receiver.mjs';
+import { provision } from './setup.mjs';
+
+const servers = [];
+after(async () => Promise.all(servers.map(server => new Promise(resolve => server.close(resolve)))));
+
+async function listen(server) {
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    servers.push(server);
+    return `http://127.0.0.1:${server.address().port}`;
+}
+
+test('event size is exact and each event has a distinct idempotency key', () => {
+    const first = buildEventBody('load.created', 1024, 'run-a', 1);
+    const second = buildEventBody('load.created', 1024, 'run-a', 2);
+    assert.equal(Buffer.byteLength(first), 1024);
+    assert.equal(JSON.parse(first).data.sequence, 1);
+    assert.equal(JSON.parse(second).data.sequence, 2);
+    assert.notEqual(first, second);
+    assert.throws(() => buildEventBody('load.created', 8, 'run-a', 1), /too small/);
+    assert.throws(() => buildEventBody('load.created', 262145, 'run-a', 1), /262144/);
+});
+
+test('producer counts only 202 as accepted and bounds in-flight requests', async () => {
+    const keys = [];
+    const server = createServer((request, response) => {
+        keys.push(request.headers['idempotency-key']);
+        request.resume();
+        request.on('end', () => {
+            response.writeHead(keys.length % 2 ? 202 : 429);
+            response.end('{}');
+        });
+    });
+    const baseUrl = await listen(server);
+    const lines = [];
+    const result = await runProducer({ baseUrl, tenants: [{ api_key: 'test', event_type: 'load.created' }],
+        rate: 20, durationSeconds: 0.3, payloadBytes: 256, maxInFlight: 2,
+        timeoutMs: 1000, runId: 'run-a', instanceId: 'one', record: line => lines.push(line) });
+    assert.equal(result.scheduled, 6);
+    assert.equal(result.skipped, 0);
+    assert.equal(result.completed + result.skipped, 6);
+    assert.equal(result.accepted + result.rejected + result.errors, result.completed);
+    assert.equal(new Set(keys).size, keys.length);
+    assert.equal(lines.length, result.completed);
+    assert.ok(lines.every(line => !JSON.stringify(line).includes('test')));
+    assert.ok(result.accepted > 0);
+    assert.ok(result.rejected > 0);
+});
+
+test('producer exits when result recording fails', async () => {
+    const server = createServer((request, response) => {
+        request.resume();
+        request.on('end', () => response.writeHead(202).end());
+    });
+    const baseUrl = await listen(server);
+    await assert.rejects(runProducer({ baseUrl,
+        tenants: [{ api_key: 'private-key', event_type: 'load.created' }], rate: 20,
+        durationSeconds: 0.1, payloadBytes: 256, maxInFlight: 2, timeoutMs: 1000,
+        runId: 'run-c', instanceId: 'one', record: () => { throw new Error('disk full'); } }),
+    /disk full/);
+});
+
+test('producer records a bounded transport error code without credentials', async () => {
+    const server = createServer(request => request.socket.destroy());
+    const baseUrl = await listen(server);
+    const records = [];
+    const result = await runProducer({ baseUrl,
+        tenants: [{ api_key: 'private-key', event_type: 'load.created' }], rate: 10,
+        durationSeconds: 0.1, payloadBytes: 256, maxInFlight: 1, timeoutMs: 1000,
+        runId: 'run-d', instanceId: 'one', record: line => records.push(line) });
+    assert.equal(result.errors, 1);
+    assert.equal(records[0].error_code, 'ECONNRESET');
+    assert.ok(!JSON.stringify(records).includes('private-key'));
+});
+
+test('producer records skipped arrivals instead of building an unbounded queue', async () => {
+    const server = createServer((request, response) => {
+        request.resume();
+        request.on('end', () => setTimeout(() => response.writeHead(202).end(), 80));
+    });
+    const baseUrl = await listen(server);
+    const result = await runProducer({ baseUrl, tenants: [{ api_key: 'test', event_type: 'load.created' }],
+        rate: 100, durationSeconds: 0.2, payloadBytes: 256, maxInFlight: 1,
+        timeoutMs: 1000, runId: 'run-b', instanceId: 'one' });
+    assert.equal(result.scheduled, 20);
+    assert.ok(result.skipped > 10);
+    assert.equal(result.completed + result.skipped, result.scheduled);
+    assert.equal(result.max_in_flight_observed, 1);
+});
+
+test('receiver applies delay and an exact deterministic failure percentage', async () => {
+    const baseUrl = await listen(createReceiver({ latencyMs: 15, failurePercent: 25 }));
+    const start = performance.now();
+    const statuses = [];
+    for (let index = 0; index < 8; index += 1) {
+        statuses.push((await fetch(`${baseUrl}/load/test`, { method: 'POST', body: '{}' })).status);
+    }
+    assert.deepEqual(statuses.filter(status => status === 503).length, 2);
+    assert.ok(performance.now() - start >= 100);
+    const stats = await (await fetch(`${baseUrl}/__stats`)).json();
+    assert.equal(stats.requests, 8);
+    assert.equal(stats.failures, 2);
+});
+
+test('setup creates requested fan-out for each tenant and keeps keys in the manifest', async () => {
+    const calls = [];
+    const api = async (path, body, headers) => {
+        calls.push({ path, body, headers });
+        if (path === '/v1/organizations') {
+            return { data: { organization_id: `org-${calls.length}`, api_key: `rf_key_${calls.length}_secret` } };
+        }
+        if (path.includes('/rotate')) {
+            return { data: { api_key: `rotated-${calls.length}` } };
+        }
+        return { data: { endpoint_id: `endpoint-${calls.length}` } };
+    };
+    const manifest = await provision({ tenants: 2, fanout: 3, receiverUrl: 'http://load-receiver:8080',
+        runId: 'run-a', provisioningCredential: 'private', api });
+    assert.equal(manifest.tenants.length, 2);
+    assert.equal(calls.filter(call => call.path === '/v1/endpoints').length, 6);
+    assert.ok(calls.filter(call => call.path === '/v1/endpoints')
+        .every(call => call.body.event_types[0] === manifest.event_type));
+    assert.equal(manifest.tenants[0].api_key, 'rotated-2');
+    assert.equal(manifest.fanout, 3);
+});
