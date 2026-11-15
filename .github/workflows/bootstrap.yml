@@ -18,6 +18,8 @@ jobs:
           package-manager-cache: false
       - name: Test J3 generators
         run: node --test load-tests/load.test.mjs
+      - name: Test J3 benchmark collector
+        run: python3 -m unittest discover -s load-tests -p 'benchmark_test.py'
 
   build-and-smoke:
     runs-on: ubuntu-latest
