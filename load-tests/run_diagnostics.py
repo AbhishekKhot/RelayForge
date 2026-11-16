@@ -11,10 +11,12 @@ from uuid import uuid4
 from benchmark import compose_args, sql
 
 
-def diagnostic_plan(prefix):
+def diagnostic_plan(prefix, controlled=False):
+    windows = (("controlled", 20),) if controlled else (
+        ("normal", 5), ("peak", 3), ("headroom", 2))
     return [{"profile": profile, "duration_seconds": duration,
              "repeat": repeat, "project": f"{prefix}-{profile}-{repeat}"}
-            for profile, duration in (("normal", 5), ("peak", 3), ("headroom", 2))
+            for profile, duration in windows
             for repeat in (1, 2)]
 
 
@@ -73,7 +75,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-file", default=".env.benchmark")
     parser.add_argument("--output-dir", default=None)
-    parser.add_argument("--only", choices=("normal", "peak", "headroom"))
+    parser.add_argument("--only", choices=("normal", "peak", "headroom", "controlled"))
     args = parser.parse_args()
     env_file = Path(args.env_file).resolve()
     if not env_file.exists():
@@ -81,7 +83,7 @@ def main():
     run_id = uuid4().hex[:8]
     output_dir = Path(args.output_dir or f"load-tests/results/diagnostic-{run_id}")
     output_dir.mkdir(parents=True, exist_ok=False)
-    plan = diagnostic_plan(f"relayforge-j3-{run_id}")
+    plan = diagnostic_plan(f"relayforge-j3-{run_id}", controlled=args.only == "controlled")
     if args.only:
         plan = [item for item in plan if item["profile"] == args.only]
     results = []
