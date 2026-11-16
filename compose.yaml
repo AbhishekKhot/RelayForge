@@ -206,6 +206,7 @@ services:
       args: { MODULE: relayforge-control-publisher }
     environment:
       <<: [*control-db-env, *kafka-env, *observability-env]
+      RELAYFORGE_OUTBOX_MAX_ROWS_PER_POLL: ${RELAYFORGE_OUTBOX_MAX_ROWS_PER_POLL:-100}
     depends_on:
       postgres: { condition: service_healthy }
       kafka-init: { condition: service_completed_successfully }
@@ -247,6 +248,7 @@ services:
       args: { MODULE: relayforge-ingestion-publisher }
     environment:
       <<: [*ingestion-db-env, *kafka-env, *observability-env]
+      RELAYFORGE_OUTBOX_MAX_ROWS_PER_POLL: ${RELAYFORGE_OUTBOX_MAX_ROWS_PER_POLL:-100}
     depends_on:
       postgres: { condition: service_healthy }
       kafka-init: { condition: service_completed_successfully }
@@ -327,6 +329,7 @@ services:
       args: { MODULE: relayforge-delivery-publisher }
     environment:
       <<: [*delivery-db-env, *kafka-env, *observability-env]
+      RELAYFORGE_OUTBOX_MAX_ROWS_PER_POLL: ${RELAYFORGE_OUTBOX_MAX_ROWS_PER_POLL:-100}
     depends_on:
       postgres: { condition: service_healthy }
       kafka-init: { condition: service_completed_successfully }

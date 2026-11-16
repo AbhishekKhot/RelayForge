@@ -5,11 +5,17 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.random.RandomGenerator;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class OutboxPublisherTest {
     private static final UUID ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
@@ -62,6 +68,41 @@ class OutboxPublisherTest {
         assertThat(transport.message).isEqualTo(firstMessage);
     }
 
+    @Test
+    void claimsRowsOneAtATimeUntilTheConfiguredPollLimit() {
+        OutboxRepository queued = mock(OutboxRepository.class);
+        ClaimedOutboxRow first = row(TOKEN, 1);
+        ClaimedOutboxRow second = new ClaimedOutboxRow(UUID.randomUUID(), first.organizationId(),
+                "evt_456", first.messageType(), first.topic(), "evt_456",
+                "{\"event_id\":\"evt_456\"}", UUID.randomUUID(), 1, first.createdAt());
+        when(queued.claim("publisher-1", 1, Duration.ofSeconds(30)))
+                .thenReturn(List.of(first), List.of(second));
+        when(queued.markPublished(first.id(), first.claimToken())).thenReturn(true);
+        when(queued.markPublished(second.id(), second.claimToken())).thenReturn(true);
+        OutboxPublisher publisher = new OutboxPublisher(queued, transport,
+                new OutboxEnvelope(new ObjectMapper()), "publisher-1", 2,
+                Duration.ofSeconds(30), new ZeroRandom(), () -> 0);
+
+        assertThat(publisher.publishBatch()).isEqualTo(2);
+        verify(queued, times(2)).claim(eq("publisher-1"), eq(1), eq(Duration.ofSeconds(30)));
+    }
+
+    @Test
+    void stopsAfterThePollTimeBudgetBeforeClaimingAnotherRow() {
+        OutboxRepository queued = mock(OutboxRepository.class);
+        when(queued.claim("publisher-1", 1, Duration.ofSeconds(30)))
+                .thenReturn(List.of(row(TOKEN, 1)));
+        when(queued.markPublished(ID, TOKEN)).thenReturn(true);
+        AtomicInteger clockCalls = new AtomicInteger();
+        OutboxPublisher publisher = new OutboxPublisher(queued, transport,
+                new OutboxEnvelope(new ObjectMapper()), "publisher-1", 100,
+                Duration.ofSeconds(30), new ZeroRandom(),
+                () -> clockCalls.getAndIncrement() == 0 ? 0 : Duration.ofSeconds(6).toNanos());
+
+        assertThat(publisher.publishBatch()).isEqualTo(1);
+        verify(queued, times(1)).claim("publisher-1", 1, Duration.ofSeconds(30));
+    }
+
     private OutboxPublisher publisher() {
         return new OutboxPublisher(repository, transport, new OutboxEnvelope(new ObjectMapper()),
                 "publisher-1", 10, Duration.ofSeconds(30), new ZeroRandom());
@@ -87,7 +128,7 @@ class OutboxPublisherTest {
 
         @Override
         public List<ClaimedOutboxRow> claim(String workerId, int batchSize, Duration lease) {
-            return List.of(row);
+            return marked || retried ? List.of() : List.of(row);
         }
 
         @Override
