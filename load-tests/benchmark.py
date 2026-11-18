@@ -230,7 +230,18 @@ DELIVERY_PROGRESS_SQL = """SELECT json_build_object(
     'succeeded', (SELECT count(*) FROM deliveries WHERE status = 'SUCCEEDED'),
     'dead_lettered', (SELECT count(*) FROM deliveries WHERE status = 'DEAD_LETTERED'),
     'backlog', (SELECT count(*) FROM delivery_work),
-    'outbox_pending', (SELECT count(*) FROM delivery_outbox WHERE status <> 'PUBLISHED'))"""
+    'outbox_pending', (SELECT count(*) FROM delivery_outbox WHERE status <> 'PUBLISHED'),
+    'outbox_by_type', (SELECT coalesce(json_object_agg(message_type,
+        json_build_object('pending', pending, 'published', published,
+            'in_flight', in_flight,
+            'oldest_pending_age_s', coalesce(extract(epoch FROM
+                clock_timestamp() - oldest_pending), 0))), '{}'::json)
+        FROM (SELECT message_type,
+            count(*) FILTER (WHERE status <> 'PUBLISHED') AS pending,
+            count(*) FILTER (WHERE status = 'PUBLISHED') AS published,
+            count(*) FILTER (WHERE status = 'IN_FLIGHT') AS in_flight,
+            min(created_at) FILTER (WHERE status <> 'PUBLISHED') AS oldest_pending
+            FROM delivery_outbox GROUP BY message_type) counts))"""
 
 DELIVERY_LAG_SQL = """SELECT json_build_object(
     'completed', count(*),

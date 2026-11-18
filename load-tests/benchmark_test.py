@@ -15,7 +15,9 @@ class BenchmarkEvidenceTest(unittest.TestCase):
                  "analytics relayforge.analytics.delivery-facts.v1 0 7 7 0 id host client\n")
         ingestion = '{"events":1,"outbox_pending":0}'
         delivery = ('{"routing_events":1,"routing_incomplete":0,"deliveries":3,'
-                    '"succeeded":3,"dead_lettered":0,"backlog":0,"outbox_pending":0}')
+                    '"succeeded":3,"dead_lettered":0,"backlog":0,"outbox_pending":0,'
+                    '"outbox_by_type":{"delivery.ready.v1":{"pending":0,"published":3},'
+                    '"analytics.delivery-facts.v1":{"pending":0,"published":9}}}')
         with patch("benchmark.command", return_value=kafka) as commands, \
                 patch("benchmark.sql", side_effect=[ingestion, delivery]) as queries:
             result = snapshot(["docker", "compose"], {}, detail=False)
@@ -23,6 +25,9 @@ class BenchmarkEvidenceTest(unittest.TestCase):
         self.assertEqual(commands.call_count, 1)
         self.assertEqual(queries.call_count, 2)
         self.assertNotIn("wal_bytes", queries.call_args_list[0].args[3])
+        self.assertIn("GROUP BY message_type", queries.call_args_list[1].args[3])
+        self.assertEqual(result["delivery"]["outbox_by_type"]["analytics.delivery-facts.v1"]
+                         ["published"], 9)
         self.assertNotIn("delivery_pool", result)
         self.assertEqual(set(result["probe_duration_seconds"]),
                          {"kafka", "ingestion", "delivery"})
