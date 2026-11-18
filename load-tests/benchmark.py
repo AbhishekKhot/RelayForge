@@ -38,6 +38,20 @@ def parse_kafka_lag(output):
     return dict(lag)
 
 
+def parse_kafka_positions(output):
+    positions = {}
+    for line in output.splitlines():
+        fields = line.split()
+        if len(fields) < 6 or not all(fields[index].isdigit() for index in (2, 3, 4, 5)):
+            continue
+        topic = fields[1]
+        totals = positions.setdefault(topic, {"committed": 0, "end": 0, "lag": 0})
+        totals["committed"] += int(fields[3])
+        totals["end"] += int(fields[4])
+        totals["lag"] += int(fields[5])
+    return positions
+
+
 def parse_metrics(names, output):
     responses = output.splitlines()
     if len(responses) != len(names):
@@ -185,10 +199,15 @@ DELIVERY_SQL = """SELECT json_build_object(
     'dead_lettered', (SELECT count(*) FROM deliveries WHERE status = 'DEAD_LETTERED'),
     'outbox_pending', (SELECT count(*) FROM delivery_outbox WHERE status <> 'PUBLISHED'),
     'outbox_by_type', (SELECT coalesce(json_object_agg(message_type,
-        json_build_object('pending', pending, 'published', published)), '{}'::json)
+        json_build_object('pending', pending, 'published', published,
+            'in_flight', in_flight,
+            'oldest_pending_age_s', coalesce(extract(epoch FROM
+                clock_timestamp() - oldest_pending), 0))), '{}'::json)
         FROM (SELECT message_type,
             count(*) FILTER (WHERE status <> 'PUBLISHED') AS pending,
-            count(*) FILTER (WHERE status = 'PUBLISHED') AS published
+            count(*) FILTER (WHERE status = 'PUBLISHED') AS published,
+            count(*) FILTER (WHERE status = 'IN_FLIGHT') AS in_flight,
+            min(created_at) FILTER (WHERE status <> 'PUBLISHED') AS oldest_pending
             FROM delivery_outbox GROUP BY message_type) counts),
     'database_bytes', pg_database_size(current_database()),
     'wal_bytes', (SELECT wal_bytes FROM pg_stat_wal),
@@ -226,7 +245,7 @@ def snapshot(compose, settings):
         output = command(compose + ["exec", "-T", "kafka",
             "/opt/kafka/bin/kafka-consumer-groups.sh", "--bootstrap-server", "kafka:9092",
             "--all-groups", "--describe"], timeout=20)
-        return parse_kafka_lag(output)
+        return {"lag": parse_kafka_lag(output), "positions": parse_kafka_positions(output)}
 
     def redis():
         output = command(compose + ["exec", "-T", "redis", "sh", "-c",
@@ -277,10 +296,14 @@ def snapshot(compose, settings):
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/__stats", timeout=5) as response:
             return json.load(response)
 
-    return {"time_utc": datetime.now(timezone.utc).isoformat(),
+    observed_at = datetime.now(timezone.utc).isoformat()
+    kafka_data = safe_probe(kafka)
+    return {"time_utc": observed_at,
             "ingestion": safe_probe(lambda: database("ingestion-primary", "relayforge_ingestion", INGESTION_SQL)),
             "delivery": safe_probe(lambda: database("postgres", "relayforge_delivery", DELIVERY_SQL)),
-            "kafka_lag": safe_probe(kafka), "redis": safe_probe(redis),
+            "kafka_lag": kafka_data.get("lag", kafka_data),
+            "kafka_positions": kafka_data.get("positions", kafka_data),
+            "redis": safe_probe(redis),
             "clickhouse": safe_probe(clickhouse),
             "clickhouse_queries": safe_probe(clickhouse_query),
             "docker_stats": safe_probe(docker_stats),
@@ -292,6 +315,16 @@ def snapshot(compose, settings):
                 "relayforge.delivery.handler.duration",
                 "relayforge.delivery.attempt.duration",
                 "relayforge.delivery.outbound.duration"])),
+            "delivery_publisher": safe_probe(lambda: metrics("delivery-publisher", [
+                "relayforge.outbox.pending?tag=owner:delivery",
+                "relayforge.outbox.oldest.age.seconds?tag=owner:delivery",
+                "relayforge.outbox.publish?tag=owner:delivery&tag=result:published"])),
+            "analytics_consumer": safe_probe(lambda: metrics("analytics-consumer", [
+                "relayforge.analytics.ingest.lag.seconds",
+                "relayforge.kafka.consumer.lag.max?tag=group:analytics-consumer",
+                "relayforge.clickhouse.insert.duration",
+                "relayforge.clickhouse.insert?tag=result:success",
+                "relayforge.clickhouse.insert?tag=result:error"])),
             "receiver": safe_probe(receiver)}
 
 

@@ -2,12 +2,24 @@
 
 import unittest
 
-from benchmark import (ensure_clean, evaluate, observe_drain, parse_kafka_lag, parse_metrics,
+from benchmark import (ensure_clean, evaluate, observe_drain, parse_kafka_lag,
+                       parse_kafka_positions, parse_metrics,
                        pipeline_drained, summarize_records)
 from run_diagnostics import diagnostic_plan, diagnostics_failed
 
 
 class BenchmarkEvidenceTest(unittest.TestCase):
+    def test_kafka_positions_sum_partitions_for_stage_throughput(self):
+        output = """GROUP TOPIC PARTITION CURRENT-OFFSET LOG-END-OFFSET LAG CONSUMER-ID HOST CLIENT-ID
+analytics relayforge.analytics.delivery-facts.v1 0 12 20 8 id host client
+analytics relayforge.analytics.delivery-facts.v1 1 7 10 3 id host client
+analytics relayforge.analytics.delivery-facts.v1 2 - 4 - id host client
+"""
+        self.assertEqual(parse_kafka_positions(output), {
+            "relayforge.analytics.delivery-facts.v1": {
+                "committed": 19, "end": 30, "lag": 11},
+        })
+
     def test_metric_probe_keeps_named_gauges_and_timer_totals(self):
         names = ["hikaricp.connections.active", "relayforge.delivery.handler.duration"]
         output = ('{"measurements":[{"statistic":"VALUE","value":7}]}\n'
