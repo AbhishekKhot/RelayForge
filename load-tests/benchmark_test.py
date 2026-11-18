@@ -1,14 +1,32 @@
 """Behavior checks for the J3 evidence collector."""
 
 import unittest
+from unittest.mock import patch
 
 from benchmark import (ensure_clean, evaluate, observe_drain, parse_kafka_lag,
                        parse_kafka_positions, parse_metrics, timed_probe,
-                       pipeline_drained, summarize_records)
+                       pipeline_drained, snapshot, summarize_records)
 from run_diagnostics import diagnostic_plan, diagnostics_failed
 
 
 class BenchmarkEvidenceTest(unittest.TestCase):
+    def test_progress_snapshot_reads_only_drain_state(self):
+        kafka = ("GROUP TOPIC PARTITION CURRENT-OFFSET LOG-END-OFFSET LAG CONSUMER-ID HOST CLIENT-ID\n"
+                 "analytics relayforge.analytics.delivery-facts.v1 0 7 7 0 id host client\n")
+        ingestion = '{"events":1,"outbox_pending":0}'
+        delivery = ('{"routing_events":1,"routing_incomplete":0,"deliveries":3,'
+                    '"succeeded":3,"dead_lettered":0,"backlog":0,"outbox_pending":0}')
+        with patch("benchmark.command", return_value=kafka) as commands, \
+                patch("benchmark.sql", side_effect=[ingestion, delivery]) as queries:
+            result = snapshot(["docker", "compose"], {}, detail=False)
+        self.assertTrue(pipeline_drained(result))
+        self.assertEqual(commands.call_count, 1)
+        self.assertEqual(queries.call_count, 2)
+        self.assertNotIn("wal_bytes", queries.call_args_list[0].args[3])
+        self.assertNotIn("delivery_pool", result)
+        self.assertEqual(set(result["probe_duration_seconds"]),
+                         {"kafka", "ingestion", "delivery"})
+
     def test_timed_probe_records_duration_and_keeps_probe_error(self):
         durations = {}
         clock = iter([10.0, 10.25, 11.0, 11.75])
