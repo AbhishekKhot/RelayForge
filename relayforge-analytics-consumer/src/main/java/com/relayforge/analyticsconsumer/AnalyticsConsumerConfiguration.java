@@ -30,6 +30,7 @@ public class AnalyticsConsumerConfiguration {
         return new AnalyticsKafkaLifecycle(
                 environment.getRequiredProperty("relayforge.kafka.bootstrap-servers"),
                 new EnvelopeValidator(json), store, metrics,
-                environment.getProperty("relayforge.analytics.max-poll-records", Integer.class, 1));
+                environment.getProperty("relayforge.analytics.max-poll-records", Integer.class, 1),
+                environment.getProperty("relayforge.analytics.fact-batch-size", Integer.class, 1));
     }
 }
