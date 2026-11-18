@@ -3,6 +3,10 @@ package com.relayforge.analyticsconsumer;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -11,6 +15,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Duration;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +30,124 @@ import org.junit.jupiter.api.Test;
 
 class AnalyticsKafkaLifecycleTest {
     private static final String TOPIC = "relayforge.analytics.delivery-facts.v1";
+
+    @Test
+    void commitsProcessedPollAsOneContiguousOffset() throws Exception {
+        var consumer = spy(new MockConsumer<String, String>(OffsetResetStrategy.EARLIEST));
+        var producer = new MockProducer<String, String>(true, new StringSerializer(),
+                new StringSerializer());
+        var store = mock(ClickHouseFactStore.class);
+        when(store.insert(any())).thenReturn(true);
+        var metrics = new SimpleMeterRegistry();
+        var lifecycle = new AnalyticsKafkaLifecycle(consumer, producer,
+                new EnvelopeValidator(new ObjectMapper()), store, metrics);
+        var partition = new TopicPartition(TOPIC, 0);
+        consumer.rebalance(List.of(partition));
+        consumer.updateBeginningOffsets(Map.of(partition, 0L));
+        for (int offset = 0; offset < 3; offset++) {
+            UUID factId = UUID.randomUUID();
+            consumer.addRecord(new ConsumerRecord<>(TOPIC, 0, offset, factId.toString(),
+                    validFact(UUID.randomUUID(), factId)));
+        }
+
+        lifecycle.runOnce();
+
+        assertThat(consumer.committed(partition).offset()).isEqualTo(3);
+        verify(consumer, times(1)).commitSync(any(Map.class), any(Duration.class));
+        verify(store, times(3)).insert(any());
+        assertThat(metrics.get("relayforge.analytics.kafka.commits").counter().count())
+                .isEqualTo(1);
+    }
+
+    @Test
+    void failedMiddleFactCommitsOnlyEarlierFactsAndReplaysTheTail() throws Exception {
+        var consumer = new MockConsumer<String, String>(OffsetResetStrategy.EARLIEST);
+        var producer = new MockProducer<String, String>(true, new StringSerializer(),
+                new StringSerializer());
+        var store = mock(ClickHouseFactStore.class);
+        when(store.insert(any())).thenReturn(true).thenThrow(new IOException("unavailable"));
+        var metrics = new SimpleMeterRegistry();
+        var lifecycle = new AnalyticsKafkaLifecycle(consumer, producer,
+                new EnvelopeValidator(new ObjectMapper()), store, metrics);
+        var partition = new TopicPartition(TOPIC, 0);
+        consumer.rebalance(List.of(partition));
+        consumer.updateBeginningOffsets(Map.of(partition, 0L));
+        for (int offset = 0; offset < 3; offset++) {
+            UUID factId = UUID.randomUUID();
+            consumer.addRecord(new ConsumerRecord<>(TOPIC, 0, offset, factId.toString(),
+                    validFact(UUID.randomUUID(), factId)));
+        }
+
+        lifecycle.runOnce();
+
+        assertThat(consumer.committed(partition).offset()).isEqualTo(1);
+        assertThat(consumer.position(partition)).isEqualTo(1);
+        verify(store, times(2)).insert(any());
+        assertThat(metrics.get("relayforge.analytics.facts").tag("result", "retry")
+                .counter().count()).isEqualTo(1);
+    }
+
+    @Test
+    void malformedFactInBatchIsQuarantinedBeforeLaterOffsetCommits() throws Exception {
+        var consumer = new MockConsumer<String, String>(OffsetResetStrategy.EARLIEST);
+        var producer = new MockProducer<String, String>(true, new StringSerializer(),
+                new StringSerializer());
+        var store = mock(ClickHouseFactStore.class);
+        when(store.insert(any())).thenReturn(true);
+        var lifecycle = new AnalyticsKafkaLifecycle(consumer, producer,
+                new EnvelopeValidator(new ObjectMapper()), store, new SimpleMeterRegistry());
+        var partition = new TopicPartition(TOPIC, 0);
+        consumer.rebalance(List.of(partition));
+        consumer.updateBeginningOffsets(Map.of(partition, 0L));
+        consumer.addRecord(new ConsumerRecord<>(TOPIC, 0, 0, "bad", "invalid-json"));
+        UUID factId = UUID.randomUUID();
+        consumer.addRecord(new ConsumerRecord<>(TOPIC, 0, 1, factId.toString(),
+                validFact(UUID.randomUUID(), factId)));
+
+        lifecycle.runOnce();
+
+        assertThat(producer.history()).hasSize(1);
+        assertThat(consumer.committed(partition).offset()).isEqualTo(2);
+        verify(store, times(1)).insert(any());
+    }
+
+    @Test
+    void failedBatchCommitSeeksBackToFirstUncommittedFact() throws Exception {
+        var consumer = spy(new MockConsumer<String, String>(OffsetResetStrategy.EARLIEST));
+        var producer = new MockProducer<String, String>(true, new StringSerializer(),
+                new StringSerializer());
+        var store = mock(ClickHouseFactStore.class);
+        when(store.insert(any())).thenReturn(true);
+        var lifecycle = new AnalyticsKafkaLifecycle(consumer, producer,
+                new EnvelopeValidator(new ObjectMapper()), store, new SimpleMeterRegistry());
+        var partition = new TopicPartition(TOPIC, 0);
+        consumer.rebalance(List.of(partition));
+        consumer.updateBeginningOffsets(Map.of(partition, 0L));
+        doThrow(new org.apache.kafka.common.errors.TimeoutException("commit unavailable"))
+                .when(consumer).commitSync(any(Map.class), any(Duration.class));
+        for (int offset = 0; offset < 2; offset++) {
+            UUID factId = UUID.randomUUID();
+            consumer.addRecord(new ConsumerRecord<>(TOPIC, 0, offset, factId.toString(),
+                    validFact(UUID.randomUUID(), factId)));
+        }
+
+        lifecycle.runOnce();
+
+        assertThat(consumer.committed(partition)).isNull();
+        assertThat(consumer.position(partition)).isZero();
+        verify(store, times(2)).insert(any());
+    }
+
+    private static String validFact(UUID organization, UUID fact) {
+        return "{\"message_id\":\"msg_" + UUID.randomUUID() + "\","
+                + "\"message_type\":\"analytics.delivery-facts.v1\",\"schema_version\":1,"
+                + "\"occurred_at\":\"2026-11-03T10:00:00Z\",\"organization_id\":\""
+                + organization + "\",\"aggregate_id\":\"" + fact + "\","
+                + "\"correlation_id\":\"test\",\"payload\":{\"organization_id\":\""
+                + organization + "\",\"fact_id\":\"" + fact + "\",\"version\":1,"
+                + "\"event_date\":\"2026-11-03\",\"fact_type\":\"event.accepted\","
+                + "\"status\":\"ACCEPTED\",\"occurred_at\":\"2026-11-03T10:00:00Z\"}}";
+    }
 
     @Test
     void quarantinesMalformedFactWithOnlySourceMetadata() throws Exception {
