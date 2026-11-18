@@ -2,7 +2,8 @@
 
 import unittest
 
-from benchmark import ensure_clean, evaluate, parse_kafka_lag, pipeline_drained, summarize_records
+from benchmark import (ensure_clean, evaluate, observe_drain, parse_kafka_lag,
+                       pipeline_drained, summarize_records)
 from run_diagnostics import diagnostic_plan, diagnostics_failed
 
 
@@ -51,6 +52,12 @@ worker relayforge.delivery.ready.v1 0 5 12 7 id host client
                          [("normal", 5), ("normal", 5), ("peak", 3), ("peak", 3),
                           ("headroom", 2), ("headroom", 2)])
 
+    def test_controlled_plan_runs_two_independent_low_rate_windows(self):
+        plan = diagnostic_plan("j3-delivery", controlled=True)
+        self.assertEqual([(item["profile"], item["duration_seconds"]) for item in plan],
+                         [("controlled", 20), ("controlled", 20)])
+        self.assertEqual(len({item["project"] for item in plan}), 2)
+
     def test_diagnostic_runner_fails_when_a_run_crashes(self):
         self.assertFalse(diagnostics_failed([{"status": "unmet"}]))
         self.assertTrue(diagnostics_failed([{"status": "unmet"},
@@ -77,6 +84,32 @@ worker relayforge.delivery.ready.v1 0 5 12 7 id host client
         self.assertFalse(pipeline_drained(snapshot))
         snapshot["delivery"]["succeeded"] = 3
         self.assertTrue(pipeline_drained(snapshot))
+
+    def test_drain_detected_by_a_snapshot_crossing_deadline_is_recorded(self):
+        waiting = {"ingestion": {"events": 1, "outbox_pending": 0},
+                   "delivery": {"routing_events": 1, "routing_incomplete": 0,
+                                "deliveries": 1, "succeeded": 0, "dead_lettered": 0,
+                                "backlog": 1, "outbox_pending": 0},
+                   "kafka_lag": {"relayforge.delivery.ready.v1": 0}}
+        done = {"ingestion": {"events": 1, "outbox_pending": 0},
+                "delivery": {"routing_events": 1, "routing_incomplete": 0,
+                             "deliveries": 1, "succeeded": 1, "dead_lettered": 0,
+                             "backlog": 0, "outbox_pending": 0},
+                "kafka_lag": {"relayforge.delivery.ready.v1": 0}}
+        elapsed = [0]
+
+        def sample():
+            elapsed[0] += 6
+            return done
+
+        def sleep(seconds):
+            elapsed[0] += seconds
+
+        drain_seconds, samples, final = observe_drain(
+            waiting, sample, 10, clock=lambda: elapsed[0], sleeper=sleep)
+        self.assertEqual(drain_seconds, 11)
+        self.assertEqual(samples, [done])
+        self.assertIs(final, done)
 
 
 if __name__ == "__main__":

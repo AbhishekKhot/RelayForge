@@ -14,7 +14,8 @@ from pathlib import Path
 from uuid import uuid4
 
 
-PROFILES = {"normal": 5000, "peak": 10000, "headroom": 15000}
+PROFILES = {"normal": 5000, "peak": 10000, "headroom": 15000,
+            "controlled": 50}
 THRESHOLDS = {"accepted_ratio": 0.99, "accepted_p95_ms": 500,
               "accepted_p99_ms": 1000, "delivery_p95_s": 5,
               "delivery_p99_s": 30, "drain_s": 120}
@@ -111,6 +112,21 @@ def pipeline_drained(snapshot_data):
             and delivery.get("outbox_pending") == 0
             and isinstance(lag, dict)
             and all(value == 0 for value in lag.values()))
+
+
+def observe_drain(initial, sampler, max_seconds, clock=time.monotonic, sleeper=time.sleep):
+    started = clock()
+    current = initial
+    samples = []
+    while True:
+        if pipeline_drained(current):
+            return round(clock() - started, 3), samples, current
+        remaining = max_seconds - (clock() - started)
+        if remaining <= 0:
+            return None, samples, current
+        sleeper(min(5, remaining))
+        current = sampler()
+        samples.append(current)
 
 
 def command(args, timeout=20):
@@ -297,16 +313,8 @@ def run_profile(args):
     producer_summary = json.loads(stdout) if producer.returncode == 0 and stdout.strip() else None
     scheduled = int(rate * args.duration_seconds)
     summary = summarize_records(records, scheduled)
-    drain_started = time.monotonic()
-    drain_seconds = None
-    drain_samples = []
-    while time.monotonic() - drain_started <= args.drain_seconds:
-        if pipeline_drained(after):
-            drain_seconds = round(time.monotonic() - drain_started, 3)
-            break
-        time.sleep(max(0, min(5, args.drain_seconds - (time.monotonic() - drain_started))))
-        after = snapshot(compose, settings)
-        drain_samples.append(after)
+    drain_seconds, drain_samples, after = observe_drain(
+        after, lambda: snapshot(compose, settings), args.drain_seconds)
     lag = safe_probe(lambda: json.loads(sql(compose, "postgres", "relayforge_delivery",
         DELIVERY_LAG_SQL % before["time_utc"])))
     if "probe_error" in lag:
