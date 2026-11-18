@@ -30,6 +30,8 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
+      - name: Test HA analytics recovery gate
+        run: python3 -m unittest discover -s scripts -p 'verify_h3_test.py'
       - name: Test and package
         run: mvn -B verify
       - name: Create local Docker environment
