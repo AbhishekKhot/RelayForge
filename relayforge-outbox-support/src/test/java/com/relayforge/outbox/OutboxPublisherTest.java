@@ -1,6 +1,7 @@
 package com.relayforge.outbox;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -22,6 +23,7 @@ class OutboxPublisherTest {
     private static final UUID TOKEN = UUID.fromString("00000000-0000-0000-0000-000000000002");
     private final RecordingRepository repository = new RecordingRepository();
     private final RecordingTransport transport = new RecordingTransport();
+    private final SimpleMeterRegistry metrics = new SimpleMeterRegistry();
 
     @Test
     void marksPublishedOnlyAfterAcknowledgement() {
@@ -31,6 +33,12 @@ class OutboxPublisherTest {
         assertThat(repository.retried).isFalse();
         assertThat(transport.topic).isEqualTo("relayforge.event.accepted.v1");
         assertThat(transport.key).isEqualTo("evt_123");
+        assertThat(metrics.get("relayforge.outbox.stage.duration").tag("stage", "claim")
+                .timer().count()).isEqualTo(2);
+        for (String stage : List.of("publish", "mark")) {
+            assertThat(metrics.get("relayforge.outbox.stage.duration").tag("stage", stage)
+                    .timer().count()).isEqualTo(1);
+        }
     }
 
     @Test
@@ -81,7 +89,7 @@ class OutboxPublisherTest {
         when(queued.markPublished(second.id(), second.claimToken())).thenReturn(true);
         OutboxPublisher publisher = new OutboxPublisher(queued, transport,
                 new OutboxEnvelope(new ObjectMapper()), "publisher-1", 2,
-                Duration.ofSeconds(30), new ZeroRandom(), () -> 0);
+                Duration.ofSeconds(30), new ZeroRandom(), () -> 0, metrics);
 
         assertThat(publisher.publishBatch()).isEqualTo(2);
         verify(queued, times(2)).claim(eq("publisher-1"), eq(1), eq(Duration.ofSeconds(30)));
@@ -97,7 +105,8 @@ class OutboxPublisherTest {
         OutboxPublisher publisher = new OutboxPublisher(queued, transport,
                 new OutboxEnvelope(new ObjectMapper()), "publisher-1", 100,
                 Duration.ofSeconds(30), new ZeroRandom(),
-                () -> clockCalls.getAndIncrement() == 0 ? 0 : Duration.ofSeconds(6).toNanos());
+                () -> clockCalls.getAndIncrement() == 0 ? 0 : Duration.ofSeconds(6).toNanos(),
+                metrics);
 
         assertThat(publisher.publishBatch()).isEqualTo(1);
         verify(queued, times(1)).claim("publisher-1", 1, Duration.ofSeconds(30));
@@ -105,7 +114,7 @@ class OutboxPublisherTest {
 
     private OutboxPublisher publisher() {
         return new OutboxPublisher(repository, transport, new OutboxEnvelope(new ObjectMapper()),
-                "publisher-1", 10, Duration.ofSeconds(30), new ZeroRandom());
+                "publisher-1", 10, Duration.ofSeconds(30), new ZeroRandom(), metrics);
     }
 
     private ClaimedOutboxRow row(UUID claimToken, int attempts) {

@@ -13,13 +13,15 @@ import org.springframework.core.env.Environment;
 @Configuration(proxyBeanMethods = false)
 public class AnalyticsConsumerConfiguration {
     @Bean
-    ClickHouseFactStore analyticsFactStore(Environment environment, ObjectMapper json) {
+    ClickHouseFactStore analyticsFactStore(Environment environment, ObjectMapper json,
+            MeterRegistry metrics) {
         HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(1))
                 .followRedirects(HttpClient.Redirect.NEVER).build();
         return new ClickHouseFactStore(
                 URI.create(environment.getRequiredProperty("relayforge.clickhouse.url")),
                 environment.getRequiredProperty("relayforge.clickhouse.username"),
-                environment.getRequiredProperty("relayforge.clickhouse.password"), json, client);
+                environment.getRequiredProperty("relayforge.clickhouse.password"), json, client,
+                metrics);
     }
 
     @Bean

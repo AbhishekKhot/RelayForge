@@ -73,11 +73,11 @@ public class OutboxPublisherConfiguration {
 
     @Bean
     OutboxPublisher outboxPublisher(OutboxRepository repository, KafkaOutboxTransport transport,
-            OutboxEnvelope envelope, Environment environment) {
+            OutboxEnvelope envelope, Environment environment, MeterRegistry metrics) {
         int maxRowsPerPoll = environment.getProperty(
                 "relayforge.outbox.max-rows-per-poll", Integer.class, 100);
         return new OutboxPublisher(repository, transport, envelope, UUID.randomUUID().toString(),
-                maxRowsPerPoll, Duration.ofSeconds(30), new SecureRandom());
+                maxRowsPerPoll, Duration.ofSeconds(30), new SecureRandom(), metrics);
     }
 
     @Bean

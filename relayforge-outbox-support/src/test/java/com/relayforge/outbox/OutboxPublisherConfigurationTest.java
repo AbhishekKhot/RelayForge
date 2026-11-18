@@ -1,6 +1,7 @@
 package com.relayforge.outbox;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -26,7 +27,8 @@ class OutboxPublisherConfigurationTest {
         when(repository.markPublished(row.id(), row.claimToken())).thenReturn(true);
 
         OutboxPublisher publisher = new OutboxPublisherConfiguration().outboxPublisher(
-                repository, transport, new OutboxEnvelope(new ObjectMapper()), new MockEnvironment());
+                repository, transport, new OutboxEnvelope(new ObjectMapper()),
+                new MockEnvironment(), new SimpleMeterRegistry());
 
         assertThat(publisher.publishBatch()).isEqualTo(2);
     }
@@ -44,7 +46,8 @@ class OutboxPublisherConfigurationTest {
                 .withProperty("relayforge.outbox.max-rows-per-poll", "3");
 
         OutboxPublisher publisher = new OutboxPublisherConfiguration().outboxPublisher(
-                repository, transport, new OutboxEnvelope(new ObjectMapper()), environment);
+                repository, transport, new OutboxEnvelope(new ObjectMapper()), environment,
+                new SimpleMeterRegistry());
 
         assertThat(publisher.publishBatch()).isEqualTo(3);
     }

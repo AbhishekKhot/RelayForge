@@ -237,6 +237,14 @@ def safe_probe(probe):
         return {"probe_error": type(error).__name__}
 
 
+def timed_probe(name, probe, durations, clock=time.monotonic):
+    started = clock()
+    try:
+        return safe_probe(probe)
+    finally:
+        durations[name] = round(max(0, clock() - started), 3)
+
+
 def snapshot(compose, settings):
     def database(service, name, query):
         return json.loads(sql(compose, service, name, query))
@@ -296,37 +304,52 @@ def snapshot(compose, settings):
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/__stats", timeout=5) as response:
             return json.load(response)
 
+    started = time.monotonic()
     observed_at = datetime.now(timezone.utc).isoformat()
-    kafka_data = safe_probe(kafka)
-    return {"time_utc": observed_at,
-            "ingestion": safe_probe(lambda: database("ingestion-primary", "relayforge_ingestion", INGESTION_SQL)),
-            "delivery": safe_probe(lambda: database("postgres", "relayforge_delivery", DELIVERY_SQL)),
+    durations = {}
+    def probe(name, operation):
+        return timed_probe(name, operation, durations)
+
+    kafka_data = probe("kafka", kafka)
+    result = {"time_utc": observed_at,
+            "ingestion": probe("ingestion", lambda: database(
+                "ingestion-primary", "relayforge_ingestion", INGESTION_SQL)),
+            "delivery": probe("delivery", lambda: database(
+                "postgres", "relayforge_delivery", DELIVERY_SQL)),
             "kafka_lag": kafka_data.get("lag", kafka_data),
             "kafka_positions": kafka_data.get("positions", kafka_data),
-            "redis": safe_probe(redis),
-            "clickhouse": safe_probe(clickhouse),
-            "clickhouse_queries": safe_probe(clickhouse_query),
-            "docker_stats": safe_probe(docker_stats),
-            "ingestion_pool": safe_probe(lambda: metrics("ingestion", [
+            "redis": probe("redis", redis),
+            "clickhouse": probe("clickhouse", clickhouse),
+            "clickhouse_queries": probe("clickhouse_queries", clickhouse_query),
+            "docker_stats": probe("docker_stats", docker_stats),
+            "ingestion_pool": probe("ingestion_pool", lambda: metrics("ingestion", [
                 "hikaricp.connections.active"])),
-            "delivery_pool": safe_probe(lambda: metrics("delivery-worker", [
+            "delivery_pool": probe("delivery_pool", lambda: metrics("delivery-worker", [
                 "hikaricp.connections.active", "hikaricp.connections.pending",
                 "hikaricp.connections.max", "relayforge.delivery.handlers.active",
                 "relayforge.delivery.handler.duration",
                 "relayforge.delivery.attempt.duration",
                 "relayforge.delivery.outbound.duration"])),
-            "delivery_publisher": safe_probe(lambda: metrics("delivery-publisher", [
+            "delivery_publisher": probe("delivery_publisher", lambda: metrics("delivery-publisher", [
                 "relayforge.outbox.pending?tag=owner:delivery",
                 "relayforge.outbox.oldest.age.seconds?tag=owner:delivery",
-                "relayforge.outbox.publish?tag=owner:delivery&tag=result:published"])),
-            "analytics_consumer": safe_probe(lambda: metrics("analytics-consumer", [
+                "relayforge.outbox.publish?tag=owner:delivery&tag=result:published",
+                "relayforge.outbox.stage.duration?tag=stage:claim",
+                "relayforge.outbox.stage.duration?tag=stage:publish",
+                "relayforge.outbox.stage.duration?tag=stage:mark"])),
+            "analytics_consumer": probe("analytics_consumer", lambda: metrics("analytics-consumer", [
                 "relayforge.analytics.ingest.lag.seconds",
                 "relayforge.kafka.consumer.lag.max?tag=group:analytics-consumer",
                 "relayforge.clickhouse.insert.duration",
                 "relayforge.clickhouse.insert?tag=result:success",
                 "relayforge.clickhouse.insert?tag=result:error",
-                "relayforge.analytics.kafka.commits"])),
-            "receiver": safe_probe(receiver)}
+                "relayforge.analytics.kafka.commits",
+                "relayforge.clickhouse.fact.stage.duration?tag=stage:lookup",
+                "relayforge.clickhouse.fact.stage.duration?tag=stage:insert"])),
+            "receiver": probe("receiver", receiver)}
+    result["probe_duration_seconds"] = durations
+    result["snapshot_duration_seconds"] = round(max(0, time.monotonic() - started), 3)
+    return result
 
 
 def settings_file(path):

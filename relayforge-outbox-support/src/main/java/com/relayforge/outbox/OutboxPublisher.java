@@ -1,5 +1,7 @@
 package com.relayforge.outbox;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.function.LongSupplier;
@@ -19,20 +21,27 @@ public final class OutboxPublisher {
     private final Duration lease;
     private final RandomGenerator random;
     private final LongSupplier monotonicNanos;
+    private final MeterRegistry metrics;
 
     public OutboxPublisher(OutboxRepository repository, OutboxTransport transport, OutboxEnvelope envelope,
-            String workerId, int maxRowsPerPoll, Duration lease, RandomGenerator random) {
-        this(repository, transport, envelope, workerId, maxRowsPerPoll, lease, random, System::nanoTime);
+            String workerId, int maxRowsPerPoll, Duration lease, RandomGenerator random,
+            MeterRegistry metrics) {
+        this(repository, transport, envelope, workerId, maxRowsPerPoll, lease, random,
+                System::nanoTime, metrics);
     }
 
     OutboxPublisher(OutboxRepository repository, OutboxTransport transport, OutboxEnvelope envelope,
             String workerId, int maxRowsPerPoll, Duration lease, RandomGenerator random,
-            LongSupplier monotonicNanos) {
+            LongSupplier monotonicNanos, MeterRegistry metrics) {
         this.repository = Objects.requireNonNull(repository);
         this.transport = Objects.requireNonNull(transport);
         this.envelope = Objects.requireNonNull(envelope);
         this.random = Objects.requireNonNull(random);
         this.monotonicNanos = Objects.requireNonNull(monotonicNanos);
+        this.metrics = Objects.requireNonNull(metrics);
+        for (String stage : java.util.List.of("claim", "publish", "mark")) {
+            metrics.timer("relayforge.outbox.stage.duration", "stage", stage);
+        }
         if (workerId == null || workerId.isBlank() || workerId.length() > 160
                 || maxRowsPerPoll < 1 || maxRowsPerPoll > 100 || lease == null
                 || lease.compareTo(Duration.ofSeconds(10)) < 0
@@ -51,7 +60,13 @@ public final class OutboxPublisher {
             if (attempted > 0 && monotonicNanos.getAsLong() - started >= MAX_POLL_NANOS) {
                 break;
             }
-            var rows = repository.claim(workerId, 1, lease);
+            var claimSample = Timer.start(metrics);
+            java.util.List<ClaimedOutboxRow> rows;
+            try {
+                rows = repository.claim(workerId, 1, lease);
+            } finally {
+                claimSample.stop(metrics.timer("relayforge.outbox.stage.duration", "stage", "claim"));
+            }
             if (rows.isEmpty()) {
                 break;
             }
@@ -63,6 +78,7 @@ public final class OutboxPublisher {
                 retry(row, "INVALID_ENVELOPE");
                 continue;
             }
+            var publishSample = Timer.start(metrics);
             try {
                 transport.publish(row.topic(), row.partitionKey(), serialized);
             } catch (InterruptedException interrupted) {
@@ -71,8 +87,18 @@ public final class OutboxPublisher {
             } catch (Exception failed) {
                 retry(row, "PUBLISH_FAILED");
                 continue;
+            } finally {
+                publishSample.stop(metrics.timer("relayforge.outbox.stage.duration",
+                        "stage", "publish"));
             }
-            if (repository.markPublished(row.id(), row.claimToken())) {
+            var markSample = Timer.start(metrics);
+            boolean marked;
+            try {
+                marked = repository.markPublished(row.id(), row.claimToken());
+            } finally {
+                markSample.stop(metrics.timer("relayforge.outbox.stage.duration", "stage", "mark"));
+            }
+            if (marked) {
                 published++;
                 LOG.info("Outbox message published organizationId={} eventId={} outboxId={} "
                                 + "topic={} workerName={}", row.organizationId(), row.aggregateId(),

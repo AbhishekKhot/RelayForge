@@ -3,12 +3,22 @@
 import unittest
 
 from benchmark import (ensure_clean, evaluate, observe_drain, parse_kafka_lag,
-                       parse_kafka_positions, parse_metrics,
+                       parse_kafka_positions, parse_metrics, timed_probe,
                        pipeline_drained, summarize_records)
 from run_diagnostics import diagnostic_plan, diagnostics_failed
 
 
 class BenchmarkEvidenceTest(unittest.TestCase):
+    def test_timed_probe_records_duration_and_keeps_probe_error(self):
+        durations = {}
+        clock = iter([10.0, 10.25, 11.0, 11.75])
+        self.assertEqual(timed_probe("healthy", lambda: {"value": 1}, durations,
+                                     lambda: next(clock)), {"value": 1})
+        self.assertEqual(timed_probe("failed", lambda: (_ for _ in ()).throw(ValueError()),
+                                     durations, lambda: next(clock)),
+                         {"probe_error": "ValueError"})
+        self.assertEqual(durations, {"healthy": 0.25, "failed": 0.75})
+
     def test_kafka_positions_sum_partitions_for_stage_throughput(self):
         output = """GROUP TOPIC PARTITION CURRENT-OFFSET LOG-END-OFFSET LAG CONSUMER-ID HOST CLIENT-ID
 analytics relayforge.analytics.delivery-facts.v1 0 12 20 8 id host client
