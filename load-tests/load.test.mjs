@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { after, test } from 'node:test';
 import { once } from 'node:events';
-import { buildEventBody, runProducer } from './producer.mjs';
+import { buildEventBody, plannedStartDelay, producerBaseUrl, runProducer } from './producer.mjs';
 import { createReceiver } from './receiver.mjs';
 import { provision } from './setup.mjs';
 
@@ -25,6 +25,13 @@ test('event size is exact and each event has a distinct idempotency key', () => 
     assert.notEqual(first, second);
     assert.throws(() => buildEventBody('load.created', 8, 'run-a', 1), /too small/);
     assert.throws(() => buildEventBody('load.created', 262145, 'run-a', 1), /262144/);
+});
+
+test('producer uses the configured remote ingestion URL when provided', () => {
+    assert.equal(producerBaseUrl({ INGESTION_API_URL: 'https://ingestion.example.test' }),
+        'https://ingestion.example.test');
+    assert.equal(producerBaseUrl({ INGESTION_API_HOST_PORT: '18082' }),
+        'http://127.0.0.1:18082');
 });
 
 test('producer counts only 202 as accepted and bounds in-flight requests', async () => {
@@ -51,6 +58,31 @@ test('producer counts only 202 as accepted and bounds in-flight requests', async
     assert.ok(lines.every(line => !JSON.stringify(line).includes('test')));
     assert.ok(result.accepted > 0);
     assert.ok(result.rejected > 0);
+});
+
+test('producer waits for a shared UTC start and records timing offsets', async () => {
+    const server = createServer((request, response) => {
+        request.resume();
+        request.on('end', () => response.writeHead(202).end());
+    });
+    const baseUrl = await listen(server);
+    const planned = new Date(Date.now() + 120).toISOString();
+    const records = [];
+    const result = await runProducer({ baseUrl,
+        tenants: [{ api_key: 'test', event_type: 'load.created' }], rate: 20,
+        durationSeconds: 0.1, payloadBytes: 256, maxInFlight: 2, timeoutMs: 1000,
+        runId: 'shared-run', instanceId: 'shard-a', startAtUtc: planned,
+        record: line => records.push(line) });
+    assert.equal(result.planned_start_at_utc, planned);
+    assert.ok(Date.parse(result.started_at_utc) >= Date.parse(planned));
+    assert.equal(result.scheduled, 2);
+    assert.ok(records.every(line => line.sent_offset_ms >= 0
+        && line.completed_offset_ms >= line.sent_offset_ms));
+    assert.throws(() => plannedStartDelay('not-a-time', Date.now()), /start-at-utc/);
+    assert.throws(() => plannedStartDelay(new Date(Date.now() - 2000).toISOString(),
+        Date.now()), /past/);
+    assert.throws(() => plannedStartDelay(new Date(Date.now() + 360000).toISOString(),
+        Date.now()), /five minutes/);
 });
 
 test('producer exits when result recording fails', async () => {
