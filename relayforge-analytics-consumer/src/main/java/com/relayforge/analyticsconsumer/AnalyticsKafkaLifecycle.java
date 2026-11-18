@@ -9,6 +9,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Gauge;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -40,6 +41,7 @@ public final class AnalyticsKafkaLifecycle implements SmartLifecycle, ReadinessP
     private final EnvelopeValidator validator;
     private final ClickHouseFactStore store;
     private final MeterRegistry metrics;
+    private final int factBatchSize;
     private final AtomicBoolean running = new AtomicBoolean();
     private final AtomicLong latestFactEpochSeconds = new AtomicLong();
     private final AtomicLong maximumKafkaLag = new AtomicLong();
@@ -47,19 +49,31 @@ public final class AnalyticsKafkaLifecycle implements SmartLifecycle, ReadinessP
     private int consecutiveFailures;
 
     public AnalyticsKafkaLifecycle(String bootstrapServers, EnvelopeValidator validator,
-            ClickHouseFactStore store, MeterRegistry metrics, int maxPollRecords) {
-        this(new KafkaConsumer<>(consumerSettings(bootstrapServers, maxPollRecords)),
-                new KafkaProducer<>(producerSettings(bootstrapServers)), validator, store, metrics);
+            ClickHouseFactStore store, MeterRegistry metrics, int maxPollRecords,
+            int factBatchSize) {
+        this(new KafkaConsumer<>(consumerSettings(bootstrapServers, maxPollRecords, factBatchSize)),
+                new KafkaProducer<>(producerSettings(bootstrapServers)), validator, store, metrics,
+                factBatchSize);
     }
 
     AnalyticsKafkaLifecycle(Consumer<String, String> consumer,
             Producer<String, String> quarantine, EnvelopeValidator validator,
             ClickHouseFactStore store, MeterRegistry metrics) {
+        this(consumer, quarantine, validator, store, metrics, 1);
+    }
+
+    AnalyticsKafkaLifecycle(Consumer<String, String> consumer,
+            Producer<String, String> quarantine, EnvelopeValidator validator,
+            ClickHouseFactStore store, MeterRegistry metrics, int factBatchSize) {
+        if (factBatchSize < 1 || factBatchSize > 32) {
+            throw new IllegalArgumentException("Invalid analytics fact batch size");
+        }
         this.consumer = consumer;
         this.quarantine = quarantine;
         this.validator = validator;
         this.store = store;
         this.metrics = metrics;
+        this.factBatchSize = factBatchSize;
         Gauge.builder("relayforge.analytics.ingest.lag.seconds", latestFactEpochSeconds,
                 value -> value.get() == 0 ? -1 : Math.max(0, Instant.now().getEpochSecond() - value.get()))
                 .register(metrics);
@@ -72,9 +86,13 @@ public final class AnalyticsKafkaLifecycle implements SmartLifecycle, ReadinessP
         consumer.subscribe(List.of(TOPIC));
     }
 
-    private static Properties consumerSettings(String servers, int maxPollRecords) {
+    private static Properties consumerSettings(String servers, int maxPollRecords,
+            int factBatchSize) {
         if (maxPollRecords < 1 || maxPollRecords > 32) {
             throw new IllegalArgumentException("Invalid analytics poll size");
+        }
+        if (factBatchSize < 1 || factBatchSize > maxPollRecords) {
+            throw new IllegalArgumentException("Invalid analytics fact batch size");
         }
         Properties settings = KafkaConsumerSettings.properties(servers,
                 "relayforge-analytics-consumer", maxPollRecords, maxPollRecords,
@@ -112,10 +130,40 @@ public final class AnalyticsKafkaLifecycle implements SmartLifecycle, ReadinessP
             long firstOffset = partitionRecords.getFirst().offset();
             long nextOffset = firstOffset;
             Long failedOffset = null;
-            for (ConsumerRecord<String, String> record : partitionRecords) {
+            for (int index = 0; index < partitionRecords.size();) {
+                ConsumerRecord<String, String> record = partitionRecords.get(index);
                 try {
-                    process(record);
-                    nextOffset = record.offset() + 1;
+                    if (factBatchSize == 1) {
+                        process(record);
+                        nextOffset = record.offset() + 1;
+                        index++;
+                    } else {
+                        AnalyticsFact firstFact;
+                        try {
+                            firstFact = parseFact(record);
+                        } catch (InvalidEnvelopeException | IllegalArgumentException invalid) {
+                            quarantine(record);
+                            metrics.counter("relayforge.analytics.facts", "result", "invalid")
+                                    .increment();
+                            consecutiveFailures = 0;
+                            nextOffset = record.offset() + 1;
+                            index++;
+                            continue;
+                        }
+                        List<AnalyticsFact> facts = new ArrayList<>();
+                        facts.add(firstFact);
+                        for (int next = index + 1; next < partitionRecords.size()
+                                && facts.size() < factBatchSize; next++) {
+                            try {
+                                facts.add(parseFact(partitionRecords.get(next)));
+                            } catch (InvalidEnvelopeException | IllegalArgumentException invalid) {
+                                break;
+                            }
+                        }
+                        storeBatch(facts);
+                        index += facts.size();
+                        nextOffset = partitionRecords.get(index - 1).offset() + 1;
+                    }
                 } catch (Exception unavailable) {
                     if (unavailable instanceof InterruptedException) {
                         Thread.currentThread().interrupt();
@@ -143,8 +191,7 @@ public final class AnalyticsKafkaLifecycle implements SmartLifecycle, ReadinessP
     private void process(ConsumerRecord<String, String> record) throws Exception {
         AnalyticsFact fact;
         try {
-            var envelope = validator.validate(record.topic(), record.key(), record.value());
-            fact = AnalyticsFact.parse(envelope);
+            fact = parseFact(record);
         } catch (InvalidEnvelopeException | IllegalArgumentException invalid) {
             quarantine(record);
             metrics.counter("relayforge.analytics.facts", "result", "invalid").increment();
@@ -163,6 +210,37 @@ public final class AnalyticsKafkaLifecycle implements SmartLifecycle, ReadinessP
             metrics.timer("relayforge.clickhouse.insert.duration").record(
                     Math.max(0, System.nanoTime() - started), TimeUnit.NANOSECONDS);
         }
+        recordFact(fact, inserted);
+    }
+
+    private AnalyticsFact parseFact(ConsumerRecord<String, String> record) {
+        var envelope = validator.validate(record.topic(), record.key(), record.value());
+        return AnalyticsFact.parse(envelope);
+    }
+
+    private void storeBatch(List<AnalyticsFact> facts) throws Exception {
+        long started = System.nanoTime();
+        List<Boolean> inserted;
+        try {
+            inserted = store.insertBatch(facts);
+            if (inserted.size() != facts.size()) {
+                throw new IllegalStateException("Incomplete analytics fact batch result");
+            }
+            metrics.counter("relayforge.clickhouse.insert", "result", "success")
+                    .increment(facts.size());
+        } catch (Exception unavailable) {
+            metrics.counter("relayforge.clickhouse.insert", "result", "error").increment();
+            throw unavailable;
+        } finally {
+            metrics.timer("relayforge.clickhouse.insert.duration").record(
+                    Math.max(0, System.nanoTime() - started), TimeUnit.NANOSECONDS);
+        }
+        for (int index = 0; index < facts.size(); index++) {
+            recordFact(facts.get(index), inserted.get(index));
+        }
+    }
+
+    private void recordFact(AnalyticsFact fact, boolean inserted) {
         latestFactEpochSeconds.accumulateAndGet(fact.occurredAt().getEpochSecond(), Math::max);
         metrics.counter("relayforge.analytics.facts", "result",
                 inserted ? "inserted" : "duplicate").increment();

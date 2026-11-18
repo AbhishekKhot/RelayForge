@@ -1,0 +1,32 @@
+{
+  "runs": [
+    {
+      "setting": "control",
+      "repeat": 1,
+      "status": "unmet",
+      "report": "control-repeat-1.json",
+      "raw": "control-repeat-1.ndjson"
+    },
+    {
+      "setting": "control",
+      "repeat": 2,
+      "status": "unmet",
+      "report": "control-repeat-2.json",
+      "raw": "control-repeat-2.ndjson"
+    },
+    {
+      "setting": "batch32",
+      "repeat": 1,
+      "status": "unmet",
+      "report": "batch32-repeat-1.json",
+      "raw": "batch32-repeat-1.ndjson"
+    },
+    {
+      "setting": "batch32",
+      "repeat": 2,
+      "status": "unmet",
+      "report": "batch32-repeat-2.json",
+      "raw": "batch32-repeat-2.ndjson"
+    }
+  ]
+}

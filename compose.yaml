@@ -358,6 +358,7 @@ services:
     environment:
       <<: [*clickhouse-env, *kafka-env, *observability-env]
       RELAYFORGE_ANALYTICS_MAX_POLL_RECORDS: ${RELAYFORGE_ANALYTICS_MAX_POLL_RECORDS:-1}
+      RELAYFORGE_ANALYTICS_FACT_BATCH_SIZE: ${RELAYFORGE_ANALYTICS_FACT_BATCH_SIZE:-1}
     depends_on:
       clickhouse: { condition: service_healthy }
       kafka-init: { condition: service_completed_successfully }

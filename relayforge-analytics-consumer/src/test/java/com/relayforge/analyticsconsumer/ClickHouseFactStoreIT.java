@@ -14,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.GenericContainer;
@@ -69,6 +70,22 @@ class ClickHouseFactStoreIT {
                     .tag("stage", "lookup").timer().count()).isEqualTo(4);
             assertThat(metrics.get("relayforge.clickhouse.fact.stage.duration")
                     .tag("stage", "insert").timer().count()).isEqualTo(2);
+            AnalyticsFact batchedFirst = fact(organization, UUID.randomUUID(), 1, "FAILED", 500);
+            AnalyticsFact batchedSecond = fact(organization, UUID.randomUUID(), 1, "UNKNOWN", null);
+            assertThat(store.insertBatch(List.of(batchedFirst, batchedSecond, batchedFirst)))
+                    .containsExactly(true, true, false);
+            assertThat(store.insertBatch(List.of(batchedFirst, batchedSecond)))
+                    .containsExactly(false, false);
+            assertThatThrownBy(() -> store.insertBatch(List.of(batchedFirst,
+                    fact(organization, batchedFirst.factId(), 1, "SUCCEEDED", 204))))
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThat(query(client, base, "SELECT count() FROM relayforge_analytics.delivery_facts "
+                    + "WHERE fact_id IN ('" + batchedFirst.factId() + "', '"
+                    + batchedSecond.factId() + "')")).isEqualTo("2");
+            assertThat(metrics.get("relayforge.clickhouse.fact.stage.duration")
+                    .tag("stage", "lookup").timer().count()).isEqualTo(6);
+            assertThat(metrics.get("relayforge.clickhouse.fact.stage.duration")
+                    .tag("stage", "insert").timer().count()).isEqualTo(3);
             query(client, base, "INSERT INTO relayforge_analytics.delivery_facts "
                     + "(organization_id, event_date, fact_id, version, fact_type, status, occurred_at) "
                     + "SELECT toUUID('" + organization + "'), toDate('2026-11-03'), "
@@ -79,8 +96,8 @@ class ClickHouseFactStoreIT {
                     + "relayforge_analytics.delivery_facts FINAL WHERE organization_id = '"
                     + organization + "' AND event_date = '2026-11-03'");
             long elapsedMillis = Duration.ofNanos(System.nanoTime() - started).toMillis();
-            assertThat(total).isEqualTo("1001");
-            System.out.println("H2 FINAL 1001-row query duration_ms=" + elapsedMillis);
+            assertThat(total).isEqualTo("1003");
+            System.out.println("H2 FINAL 1003-row query duration_ms=" + elapsedMillis);
         }
     }
 

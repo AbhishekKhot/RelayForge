@@ -12,7 +12,13 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 
 public final class ClickHouseFactStore {
     private static final String COLUMNS = "organization_id,event_date,fact_id,version,event_id,"
@@ -71,6 +77,83 @@ public final class ClickHouseFactStore {
                 + ") FORMAT JSONEachRow\n" + expected + "\n", 4096, "insert");
         return true;
     }
+
+    public List<Boolean> insertBatch(List<AnalyticsFact> facts)
+            throws IOException, InterruptedException {
+        if (facts == null || facts.size() > 32 || facts.stream().anyMatch(Objects::isNull)) {
+            throw new IllegalArgumentException("Invalid analytics fact batch");
+        }
+        if (facts.isEmpty()) {
+            return List.of();
+        }
+        Map<FactKey, JsonNode> expected = new LinkedHashMap<>();
+        Map<FactKey, Integer> firstIndex = new LinkedHashMap<>();
+        for (int index = 0; index < facts.size(); index++) {
+            AnalyticsFact fact = facts.get(index);
+            FactKey key = key(fact);
+            JsonNode value = json.readTree(fact.json(json));
+            JsonNode previous = expected.putIfAbsent(key, value);
+            if (previous != null && !previous.equals(value)) {
+                throw new IllegalArgumentException("Conflicting analytics fact version");
+            }
+            firstIndex.putIfAbsent(key, index);
+        }
+        StringBuilder query = new StringBuilder("SELECT ").append(COLUMNS)
+                .append(" FROM relayforge_analytics.delivery_facts WHERE ")
+                .append("(organization_id,event_date,fact_id,version) IN (");
+        boolean first = true;
+        for (FactKey key : expected.keySet()) {
+            if (!first) {
+                query.append(',');
+            }
+            query.append("(toUUID('").append(key.organizationId()).append("'),toDate('")
+                    .append(key.eventDate()).append("'),toUUID('").append(key.factId())
+                    .append("'),").append(key.version()).append(')');
+            first = false;
+        }
+        query.append(") FORMAT JSONEachRow");
+        String existingRows = sendTimed(query.toString(), 1024 * 1024, "lookup");
+        for (String line : existingRows.split("\\R")) {
+            if (line.isBlank()) {
+                continue;
+            }
+            JsonNode existing = json.readTree(line);
+            FactKey key;
+            try {
+                key = new FactKey(UUID.fromString(existing.path("organization_id").asText()),
+                        LocalDate.parse(existing.path("event_date").asText()),
+                        UUID.fromString(existing.path("fact_id").asText()),
+                        existing.path("version").asLong(-1));
+            } catch (RuntimeException malformed) {
+                throw new IOException("ClickHouse returned an invalid fact row", malformed);
+            }
+            JsonNode requested = expected.get(key);
+            if (requested == null) {
+                throw new IOException("ClickHouse returned an unexpected fact row");
+            }
+            if (!requested.equals(existing)) {
+                throw new IllegalArgumentException("Conflicting analytics fact version");
+            }
+            firstIndex.remove(key);
+        }
+        List<Boolean> inserted = new ArrayList<>(java.util.Collections.nCopies(facts.size(), false));
+        if (!firstIndex.isEmpty()) {
+            StringBuilder insert = new StringBuilder("INSERT INTO relayforge_analytics.delivery_facts (")
+                    .append(COLUMNS).append(") FORMAT JSONEachRow\n");
+            for (FactKey key : firstIndex.keySet()) {
+                insert.append(expected.get(key)).append('\n');
+                inserted.set(firstIndex.get(key), true);
+            }
+            sendTimed(insert.toString(), 4096, "insert");
+        }
+        return inserted;
+    }
+
+    private static FactKey key(AnalyticsFact fact) {
+        return new FactKey(fact.organizationId(), fact.eventDate(), fact.factId(), fact.version());
+    }
+
+    private record FactKey(UUID organizationId, LocalDate eventDate, UUID factId, long version) { }
 
     private String sendTimed(String query, int maximumResponseBytes, String stage)
             throws IOException, InterruptedException {
