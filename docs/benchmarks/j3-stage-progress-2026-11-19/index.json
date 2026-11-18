@@ -1,0 +1,18 @@
+{
+  "runs": [
+    {
+      "profile": "controlled",
+      "repeat": 1,
+      "status": "unmet",
+      "report": "controlled-repeat-1.json",
+      "raw": "controlled-repeat-1.ndjson"
+    },
+    {
+      "profile": "controlled",
+      "repeat": 2,
+      "status": "unmet",
+      "report": "controlled-repeat-2.json",
+      "raw": "controlled-repeat-2.ndjson"
+    }
+  ]
+}
