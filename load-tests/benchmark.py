@@ -38,6 +38,15 @@ def parse_kafka_lag(output):
     return dict(lag)
 
 
+def parse_metrics(names, output):
+    responses = output.splitlines()
+    if len(responses) != len(names):
+        raise ValueError("Incomplete actuator metric response")
+    return {name: {item["statistic"]: item["value"]
+                   for item in json.loads(response)["measurements"]}
+            for name, response in zip(names, responses)}
+
+
 def summarize_records(records, scheduled):
     outcomes = Counter(record.get("outcome") for record in records)
     accepted_latencies = [record["latency_ms"] for record in records
@@ -175,6 +184,12 @@ DELIVERY_SQL = """SELECT json_build_object(
     'succeeded', (SELECT count(*) FROM deliveries WHERE status = 'SUCCEEDED'),
     'dead_lettered', (SELECT count(*) FROM deliveries WHERE status = 'DEAD_LETTERED'),
     'outbox_pending', (SELECT count(*) FROM delivery_outbox WHERE status <> 'PUBLISHED'),
+    'outbox_by_type', (SELECT coalesce(json_object_agg(message_type,
+        json_build_object('pending', pending, 'published', published)), '{}'::json)
+        FROM (SELECT message_type,
+            count(*) FILTER (WHERE status <> 'PUBLISHED') AS pending,
+            count(*) FILTER (WHERE status = 'PUBLISHED') AS published
+            FROM delivery_outbox GROUP BY message_type) counts),
     'database_bytes', pg_database_size(current_database()),
     'wal_bytes', (SELECT wal_bytes FROM pg_stat_wal),
     'active_backends', (SELECT count(*) FROM pg_stat_activity
@@ -249,12 +264,13 @@ def snapshot(compose, settings):
         return {item["Name"]: {key: item[key] for key in ("CPUPerc", "MemPerc", "MemUsage", "PIDs")}
                 for line in output.splitlines() for item in [json.loads(line)]}
 
-    def pool(service):
-        output = command(compose + ["run", "--rm", "--no-deps", "--entrypoint", "curl",
-            "test-control-plane", "-fsS",
-            f"http://{service}:9090/actuator/metrics/hikaricp.connections.active"], timeout=30)
-        measurements = json.loads(output)["measurements"]
-        return {item["statistic"]: item["value"] for item in measurements}
+    def metrics(service, names):
+        script = ("set -e; for name in \"$@\"; do "
+                  f"curl -fsS http://{service}:9090/actuator/metrics/\"$name\"; "
+                  "printf '\\n'; done")
+        output = command(compose + ["run", "--rm", "--no-deps", "--entrypoint", "sh",
+            "test-control-plane", "-c", script, "sh", *names], timeout=30)
+        return parse_metrics(names, output)
 
     def receiver():
         port = settings.get("LOAD_RECEIVER_HOST_PORT", "18085")
@@ -268,8 +284,14 @@ def snapshot(compose, settings):
             "clickhouse": safe_probe(clickhouse),
             "clickhouse_queries": safe_probe(clickhouse_query),
             "docker_stats": safe_probe(docker_stats),
-            "ingestion_pool": safe_probe(lambda: pool("ingestion")),
-            "delivery_pool": safe_probe(lambda: pool("delivery-worker")),
+            "ingestion_pool": safe_probe(lambda: metrics("ingestion", [
+                "hikaricp.connections.active"])),
+            "delivery_pool": safe_probe(lambda: metrics("delivery-worker", [
+                "hikaricp.connections.active", "hikaricp.connections.pending",
+                "hikaricp.connections.max", "relayforge.delivery.handlers.active",
+                "relayforge.delivery.handler.duration",
+                "relayforge.delivery.attempt.duration",
+                "relayforge.delivery.outbound.duration"])),
             "receiver": safe_probe(receiver)}
 
 

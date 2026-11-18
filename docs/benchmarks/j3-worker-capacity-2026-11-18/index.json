@@ -1,0 +1,58 @@
+{
+  "runs": [
+    {
+      "cohort": "exploratory",
+      "repeat": 1,
+      "workers": 16,
+      "database_pool_size": 12,
+      "report": "exploratory-1.json",
+      "raw": "exploratory-1.ndjson",
+      "status": "unmet"
+    },
+    {
+      "cohort": "exploratory",
+      "repeat": 2,
+      "workers": 16,
+      "database_pool_size": 12,
+      "report": "exploratory-2.json",
+      "raw": "exploratory-2.ndjson",
+      "status": "unmet"
+    },
+    {
+      "cohort": "baseline",
+      "repeat": 1,
+      "workers": 8,
+      "database_pool_size": 8,
+      "report": "baseline-1.json",
+      "raw": "baseline-1.ndjson",
+      "status": "unmet"
+    },
+    {
+      "cohort": "baseline",
+      "repeat": 2,
+      "workers": 8,
+      "database_pool_size": 8,
+      "report": "baseline-2.json",
+      "raw": "baseline-2.ndjson",
+      "status": "unmet"
+    },
+    {
+      "cohort": "tuned",
+      "repeat": 1,
+      "workers": 16,
+      "database_pool_size": 12,
+      "report": "tuned-1.json",
+      "raw": "tuned-1.ndjson",
+      "status": "unmet"
+    },
+    {
+      "cohort": "tuned",
+      "repeat": 2,
+      "workers": 16,
+      "database_pool_size": 12,
+      "report": "tuned-2.json",
+      "raw": "tuned-2.ndjson",
+      "status": "unmet"
+    }
+  ]
+}

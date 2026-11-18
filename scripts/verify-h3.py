@@ -42,6 +42,19 @@ def fact(organization, endpoint, fact_id, version, fact_type, occurred):
                f"'{UUID(endpoint)}','{fact_type}','SUCCEEDED','{occurred}')")
 
 
+def wait_for_recovery(analytics, overview, bearer, expected, reader=get,
+                      sleeper=time.sleep, attempts=6):
+    for attempt in range(attempts):
+        status, body = reader(analytics, overview, bearer)
+        if status == 200:
+            assert body.get("data") == expected, (status, body)
+            return
+        assert status == 503 and body.get("code") == "ANALYTICS_TEMPORARILY_UNAVAILABLE", (status, body)
+        if attempt + 1 < attempts:
+            sleeper(2)
+    raise AssertionError("Analytics did not recover after ClickHouse restart")
+
+
 def main():
     env = settings()
     control = f"http://127.0.0.1:{env['CONTROL_API_HOST_PORT']}"
@@ -87,8 +100,10 @@ def main():
         status, unavailable = get(analytics, overview, first_key)
         assert status == 503 and unavailable["code"] == "ANALYTICS_TEMPORARILY_UNAVAILABLE", unavailable
     finally:
-        subprocess.run(["docker", "compose", "start", "clickhouse"], check=True)
-    print("H3 ClickHouse outage returned bounded analytics 503")
+        subprocess.run(["docker", "compose", "start", "--wait", "--wait-timeout", "120",
+                        "clickhouse"], check=True, timeout=150)
+        wait_for_recovery(analytics, overview, first_key, first_result["data"])
+    print("H3 ClickHouse outage returned bounded analytics 503 and recovered")
 
 
 if __name__ == "__main__":

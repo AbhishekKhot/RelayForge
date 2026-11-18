@@ -15,6 +15,7 @@ public final class MicrometerDeliveryOutcomeRecorder implements DeliveryOutcomeR
                     java.util.Locale.ROOT));
         }
         registry.timer("relayforge.delivery.attempt.duration");
+        registry.timer("relayforge.delivery.outbound.duration");
     }
 
     @Override
@@ -22,5 +23,10 @@ public final class MicrometerDeliveryOutcomeRecorder implements DeliveryOutcomeR
         registry.counter("relayforge.delivery.attempts", "outcome", outcome.name().toLowerCase(
                 java.util.Locale.ROOT)).increment();
         registry.timer("relayforge.delivery.attempt.duration").record(elapsed);
+    }
+
+    @Override
+    public void recordOutbound(Duration elapsed) {
+        registry.timer("relayforge.delivery.outbound.duration").record(elapsed);
     }
 }

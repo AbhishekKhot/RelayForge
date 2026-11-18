@@ -26,9 +26,10 @@ public final class DeliveryKafkaLifecycle implements SmartLifecycle, ReadinessPr
     private Thread thread;
 
     public DeliveryKafkaLifecycle(String bootstrapServers, ObjectMapper json,
-            DeliveryProcessor processor, MeterRegistry registry) {
+            DeliveryProcessor processor, MeterRegistry registry, DeliveryWorkerCapacity capacity) {
+        DeliveryHandlerMetrics handlerMetrics = new DeliveryHandlerMetrics(registry);
         Properties settings = KafkaConsumerSettings.properties(bootstrapServers,
-                "relayforge-delivery-worker", 32, 32, Duration.ofMinutes(5),
+                "relayforge-delivery-worker", capacity.maxInFlight(), 32, Duration.ofMinutes(5),
                 Duration.ofMillis(100), Duration.ofSeconds(2));
         settings.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         Properties producer = new Properties();
@@ -51,8 +52,8 @@ public final class DeliveryKafkaLifecycle implements SmartLifecycle, ReadinessPr
                     if (!deliveryId.toString().equals(envelope.aggregateId())) {
                         throw new IllegalStateException("Delivery identity mismatch");
                     }
-                    processor.process(deliveryId);
-                }, new ConsumerOptions(8, 32, 3, Duration.ofMillis(200),
+                    handlerMetrics.record(() -> processor.process(deliveryId));
+                }, new ConsumerOptions(capacity.workers(), capacity.maxInFlight(), 3, Duration.ofMillis(200),
                 Duration.ofMillis(100), Duration.ofSeconds(2), Duration.ofSeconds(5)), List.of(TOPIC),
                 registry, "delivery-worker");
     }

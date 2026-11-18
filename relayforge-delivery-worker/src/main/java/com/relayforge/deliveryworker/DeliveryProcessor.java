@@ -28,6 +28,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import javax.net.ssl.SSLHandshakeException;
 import javax.net.ssl.SSLPeerUnverifiedException;
 import org.slf4j.Logger;
@@ -321,7 +322,7 @@ public final class DeliveryProcessor implements AutoCloseable {
             RetryPolicy.Failure failure = RetryPolicy.Failure.NONE;
             long started = System.nanoTime();
             try {
-                SafeWebhookClient.Result response = client.send(destination, request.body(),
+                SafeWebhookClient.Result response = sendMeasured(destination, request.body(),
                         Duration.ofMillis(timeoutMillis), request.headers(), () -> !lost.get());
                 httpStatus = response.status();
                 excerpt = redact(response.excerpt(), endpoint, request);
@@ -339,7 +340,7 @@ public final class DeliveryProcessor implements AutoCloseable {
                     request = requests.build(lease.deliveryId(), locator,
                             required(payload, "event_type"), attempt.number(), payload.path("payload"),
                             refreshed, required(endpoint, "signing_secret"), clock.instant());
-                    response = client.send(destination, request.body(), Duration.ofMillis(timeoutMillis),
+                    response = sendMeasured(destination, request.body(), Duration.ofMillis(timeoutMillis),
                             request.headers(), () -> !lost.get());
                     httpStatus = response.status();
                     excerpt = redact(response.excerpt(), endpoint, request);
@@ -395,6 +396,16 @@ public final class DeliveryProcessor implements AutoCloseable {
                 || !locator.equals(required(payload, "locator"))
                 || !payload.path("payload").isObject()) {
             throw new IllegalStateException("Delivery reference does not match lease");
+        }
+    }
+
+    private SafeWebhookClient.Result sendMeasured(ValidatedDestination destination, byte[] body,
+            Duration timeout, Map<String, String> headers, BooleanSupplier leaseValid) throws IOException {
+        long started = System.nanoTime();
+        try {
+            return client.send(destination, body, timeout, headers, leaseValid);
+        } finally {
+            outcomes.recordOutbound(Duration.ofNanos(Math.max(0, System.nanoTime() - started)));
         }
     }
 
