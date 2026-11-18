@@ -187,6 +187,10 @@ INGESTION_SQL = """SELECT json_build_object(
     'commits', (SELECT xact_commit FROM pg_stat_database WHERE datname = current_database()),
     'deadlocks', (SELECT deadlocks FROM pg_stat_database WHERE datname = current_database()))"""
 
+INGESTION_PROGRESS_SQL = """SELECT json_build_object(
+    'events', (SELECT count(*) FROM events),
+    'outbox_pending', (SELECT count(*) FROM ingestion_outbox WHERE status <> 'PUBLISHED'))"""
+
 DELIVERY_SQL = """SELECT json_build_object(
     'active_subscriptions', (SELECT count(*) FROM subscription_projection WHERE status = 'ACTIVE'),
     'routing_events', (SELECT count(*) FROM routing_progress),
@@ -218,6 +222,16 @@ DELIVERY_SQL = """SELECT json_build_object(
     'commits', (SELECT xact_commit FROM pg_stat_database WHERE datname = current_database()),
     'deadlocks', (SELECT deadlocks FROM pg_stat_database WHERE datname = current_database()))"""
 
+DELIVERY_PROGRESS_SQL = """SELECT json_build_object(
+    'routing_events', (SELECT count(*) FROM routing_progress),
+    'routing_incomplete', (SELECT count(*) FROM routing_progress
+        WHERE status IN ('SELECTING', 'ROUTING')),
+    'deliveries', (SELECT count(*) FROM deliveries),
+    'succeeded', (SELECT count(*) FROM deliveries WHERE status = 'SUCCEEDED'),
+    'dead_lettered', (SELECT count(*) FROM deliveries WHERE status = 'DEAD_LETTERED'),
+    'backlog', (SELECT count(*) FROM delivery_work),
+    'outbox_pending', (SELECT count(*) FROM delivery_outbox WHERE status <> 'PUBLISHED'))"""
+
 DELIVERY_LAG_SQL = """SELECT json_build_object(
     'completed', count(*),
     'lag_p95_s', percentile_cont(0.95) WITHIN GROUP
@@ -245,7 +259,7 @@ def timed_probe(name, probe, durations, clock=time.monotonic):
         durations[name] = round(max(0, clock() - started), 3)
 
 
-def snapshot(compose, settings):
+def snapshot(compose, settings, detail=True):
     def database(service, name, query):
         return json.loads(sql(compose, service, name, query))
 
@@ -313,12 +327,18 @@ def snapshot(compose, settings):
     kafka_data = probe("kafka", kafka)
     result = {"time_utc": observed_at,
             "ingestion": probe("ingestion", lambda: database(
-                "ingestion-primary", "relayforge_ingestion", INGESTION_SQL)),
+                "ingestion-primary", "relayforge_ingestion",
+                INGESTION_SQL if detail else INGESTION_PROGRESS_SQL)),
             "delivery": probe("delivery", lambda: database(
-                "postgres", "relayforge_delivery", DELIVERY_SQL)),
+                "postgres", "relayforge_delivery",
+                DELIVERY_SQL if detail else DELIVERY_PROGRESS_SQL)),
             "kafka_lag": kafka_data.get("lag", kafka_data),
-            "kafka_positions": kafka_data.get("positions", kafka_data),
-            "redis": probe("redis", redis),
+            "kafka_positions": kafka_data.get("positions", kafka_data)}
+    if not detail:
+        result["probe_duration_seconds"] = durations
+        result["snapshot_duration_seconds"] = round(max(0, time.monotonic() - started), 3)
+        return result
+    result.update({"redis": probe("redis", redis),
             "clickhouse": probe("clickhouse", clickhouse),
             "clickhouse_queries": probe("clickhouse_queries", clickhouse_query),
             "docker_stats": probe("docker_stats", docker_stats),
@@ -346,7 +366,7 @@ def snapshot(compose, settings):
                 "relayforge.analytics.kafka.commits",
                 "relayforge.clickhouse.fact.stage.duration?tag=stage:lookup",
                 "relayforge.clickhouse.fact.stage.duration?tag=stage:insert"])),
-            "receiver": probe("receiver", receiver)}
+            "receiver": probe("receiver", receiver)})
     result["probe_duration_seconds"] = durations
     result["snapshot_duration_seconds"] = round(max(0, time.monotonic() - started), 3)
     return result
@@ -382,18 +402,19 @@ def run_profile(args):
     samples = []
     deadline = started + args.duration_seconds + args.timeout_ms / 1000 + 30
     while producer.poll() is None and time.monotonic() < deadline:
-        samples.append(snapshot(compose, settings))
+        samples.append(snapshot(compose, settings, detail=False))
         time.sleep(min(args.sample_interval_seconds, max(0, deadline - time.monotonic())))
     if producer.poll() is None:
         producer.kill()
     stdout, stderr = producer.communicate(timeout=10)
-    after = snapshot(compose, settings)
+    post_producer = snapshot(compose, settings, detail=False)
     records = [json.loads(line) for line in raw.read_text().splitlines()] if raw.exists() else []
     producer_summary = json.loads(stdout) if producer.returncode == 0 and stdout.strip() else None
     scheduled = int(rate * args.duration_seconds)
     summary = summarize_records(records, scheduled)
-    drain_seconds, drain_samples, after = observe_drain(
-        after, lambda: snapshot(compose, settings), args.drain_seconds)
+    drain_seconds, drain_samples, drain_final = observe_drain(
+        post_producer, lambda: snapshot(compose, settings, detail=False), args.drain_seconds)
+    after = snapshot(compose, settings)
     lag = safe_probe(lambda: json.loads(sql(compose, "postgres", "relayforge_delivery",
         DELIVERY_LAG_SQL % before["time_utc"])))
     if "probe_error" in lag:
@@ -404,8 +425,9 @@ def run_profile(args):
         "max_in_flight": args.max_in_flight, "run_id": run_id,
         "producer_command": producer_command, "producer_exit_code": producer.returncode,
         "producer_error_present": bool(stderr), "producer_summary": producer_summary,
-        "summary": summary, "before": before, "during": samples, "after": after,
-        "drain_samples": drain_samples, "drain_seconds": drain_seconds,
+        "summary": summary, "before": before, "during": samples,
+        "post_producer": post_producer, "drain_samples": drain_samples,
+        "drain_final": drain_final, "after": after, "drain_seconds": drain_seconds,
         "delivery_lag": lag, "evaluation": evaluation,
         "raw_results": str(raw)}
     report_path = output_dir / f"{args.profile}-{run_id}.json"
