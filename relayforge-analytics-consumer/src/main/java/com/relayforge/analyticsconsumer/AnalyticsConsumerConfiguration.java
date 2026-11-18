@@ -27,6 +27,7 @@ public class AnalyticsConsumerConfiguration {
             ObjectMapper json, ClickHouseFactStore store, MeterRegistry metrics) {
         return new AnalyticsKafkaLifecycle(
                 environment.getRequiredProperty("relayforge.kafka.bootstrap-servers"),
-                new EnvelopeValidator(json), store, metrics);
+                new EnvelopeValidator(json), store, metrics,
+                environment.getProperty("relayforge.analytics.max-poll-records", Integer.class, 1));
     }
 }

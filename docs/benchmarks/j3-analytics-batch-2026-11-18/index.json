@@ -1,0 +1,32 @@
+{
+  "runs": [
+    {
+      "max_poll_records": 1,
+      "repeat": 1,
+      "status": "unmet",
+      "report": "poll-1-repeat-1.json",
+      "raw": "poll-1-repeat-1.ndjson"
+    },
+    {
+      "max_poll_records": 1,
+      "repeat": 2,
+      "status": "unmet",
+      "report": "poll-1-repeat-2.json",
+      "raw": "poll-1-repeat-2.ndjson"
+    },
+    {
+      "max_poll_records": 32,
+      "repeat": 1,
+      "status": "unmet",
+      "report": "poll-32-repeat-1.json",
+      "raw": "poll-32-repeat-1.ndjson"
+    },
+    {
+      "max_poll_records": 32,
+      "repeat": 2,
+      "status": "unmet",
+      "report": "poll-32-repeat-2.json",
+      "raw": "poll-32-repeat-2.ndjson"
+    }
+  ]
+}

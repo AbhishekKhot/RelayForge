@@ -1,0 +1,2538 @@
+{
+  "profile": "controlled",
+  "target_rate": 50,
+  "duration_seconds": 20,
+  "payload_bytes": 1024,
+  "max_in_flight": 1000,
+  "run_id": "7f45cea5f972",
+  "producer_command": [
+    "node",
+    "load-tests/producer.mjs",
+    "--rate",
+    "50",
+    "--duration-seconds",
+    "20",
+    "--payload-bytes",
+    "1024",
+    "--max-in-flight",
+    "1000",
+    "--timeout-ms",
+    "10000",
+    "--manifest",
+    "load-tests/results/j3-analytics-batch-32-20261118/controlled-1.credentials.json",
+    "--run-id",
+    "7f45cea5f972",
+    "--instance-id",
+    "one",
+    "--output",
+    "load-tests/results/j3-analytics-batch-32-20261118/controlled-7f45cea5f972.ndjson"
+  ],
+  "producer_exit_code": 0,
+  "producer_error_present": false,
+  "producer_summary": {
+    "run_id": "7f45cea5f972",
+    "instance_id": "one",
+    "requested_rate": 50,
+    "requested_duration_seconds": 20,
+    "scheduled": 1000,
+    "completed": 1000,
+    "accepted": 990,
+    "rejected": 10,
+    "errors": 0,
+    "skipped": 0,
+    "max_in_flight_observed": 84,
+    "elapsed_seconds": 20.612,
+    "accepted_per_second": 48.03,
+    "latency_ms": {
+      "p50": 451.756,
+      "p95": 1550.949,
+      "p99": 1981.885
+    },
+    "output": "load-tests/results/j3-analytics-batch-32-20261118/controlled-7f45cea5f972.ndjson"
+  },
+  "summary": {
+    "scheduled": 1000,
+    "completed": 1000,
+    "accepted": 990,
+    "rejected": 10,
+    "transport_errors": 0,
+    "skipped": 0,
+    "accepted_latency_ms": {
+      "p50": 447.716,
+      "p95": 1550.949,
+      "p99": 2016.858
+    },
+    "rejections": {
+      "503": 10
+    },
+    "errors": {}
+  },
+  "before": {
+    "time_utc": "2026-11-18T16:05:38.641751+00:00",
+    "ingestion": {
+      "events": 0,
+      "registry": 0,
+      "outbox_pending": 0,
+      "database_bytes": 8844979,
+      "wal_bytes": 11003284,
+      "active_backends": 1,
+      "lock_waiters": 0,
+      "commits": 131,
+      "deadlocks": 0
+    },
+    "delivery": {
+      "active_subscriptions": 45,
+      "routing_events": 0,
+      "routing_incomplete": 0,
+      "deliveries": 0,
+      "attempts": 0,
+      "backlog": 0,
+      "succeeded": 0,
+      "dead_lettered": 0,
+      "outbox_pending": 0,
+      "outbox_by_type": {},
+      "database_bytes": 11720371,
+      "wal_bytes": 22776229,
+      "active_backends": 1,
+      "lock_waiters": 0,
+      "commits": 445,
+      "deadlocks": 0
+    },
+    "kafka_lag": {
+      "relayforge.config.changed.v1": 0
+    },
+    "kafka_positions": {
+      "relayforge.config.changed.v1": {
+        "committed": 45,
+        "end": 45,
+        "lag": 0
+      }
+    },
+    "redis": {
+      "connected_clients": 3,
+      "used_memory": 1126104,
+      "instantaneous_ops_per_sec": 0,
+      "keyspace_hits": 0,
+      "keyspace_misses": 0
+    },
+    "clickhouse": {
+      "active_part_rows": 0
+    },
+    "clickhouse_queries": {
+      "recent_selects": 10,
+      "recent_select_p95_ms": 20.0
+    },
+    "docker_stats": {
+      "relayforge-j3-09416ef3-controlled-1-analytics-api-1": {
+        "CPUPerc": "0.09%",
+        "MemPerc": "3.58%",
+        "MemUsage": "284.4MiB / 7.748GiB",
+        "PIDs": "63"
+      },
+      "relayforge-j3-09416ef3-controlled-1-analytics-consumer-1": {
+        "CPUPerc": "1.39%",
+        "MemPerc": "3.83%",
+        "MemUsage": "304.1MiB / 7.748GiB",
+        "PIDs": "66"
+      },
+      "relayforge-j3-09416ef3-controlled-1-clickhouse-1": {
+        "CPUPerc": "2.86%",
+        "MemPerc": "7.54%",
+        "MemUsage": "598.1MiB / 7.748GiB",
+        "PIDs": "208"
+      },
+      "relayforge-j3-09416ef3-controlled-1-control-plane-1": {
+        "CPUPerc": "0.15%",
+        "MemPerc": "3.03%",
+        "MemUsage": "240.4MiB / 7.748GiB",
+        "PIDs": "63"
+      },
+      "relayforge-j3-09416ef3-controlled-1-control-publisher-1": {
+        "CPUPerc": "1.03%",
+        "MemPerc": "3.59%",
+        "MemUsage": "285MiB / 7.748GiB",
+        "PIDs": "63"
+      },
+      "relayforge-j3-09416ef3-controlled-1-delivery-api-1": {
+        "CPUPerc": "0.12%",
+        "MemPerc": "4.32%",
+        "MemUsage": "342.5MiB / 7.748GiB",
+        "PIDs": "61"
+      },
+      "relayforge-j3-09416ef3-controlled-1-delivery-publisher-1": {
+        "CPUPerc": "28.68%",
+        "MemPerc": "4.11%",
+        "MemUsage": "325.8MiB / 7.748GiB",
+        "PIDs": "63"
+      },
+      "relayforge-j3-09416ef3-controlled-1-delivery-worker-1": {
+        "CPUPerc": "36.55%",
+        "MemPerc": "4.82%",
+        "MemUsage": "382.4MiB / 7.748GiB",
+        "PIDs": "88"
+      },
+      "relayforge-j3-09416ef3-controlled-1-ingestion-1": {
+        "CPUPerc": "0.16%",
+        "MemPerc": "4.39%",
+        "MemUsage": "347.9MiB / 7.748GiB",
+        "PIDs": "68"
+      },
+      "relayforge-j3-09416ef3-controlled-1-ingestion-primary-1": {
+        "CPUPerc": "2.66%",
+        "MemPerc": "0.37%",
+        "MemUsage": "28.97MiB / 7.748GiB",
+        "PIDs": "9"
+      },
+      "relayforge-j3-09416ef3-controlled-1-ingestion-publisher-1": {
+        "CPUPerc": "44.84%",
+        "MemPerc": "3.70%",
+        "MemUsage": "293.6MiB / 7.748GiB",
+        "PIDs": "63"
+      },
+      "relayforge-j3-09416ef3-controlled-1-ingestion-standby-1": {
+        "CPUPerc": "0.01%",
+        "MemPerc": "0.24%",
+        "MemUsage": "19.21MiB / 7.748GiB",
+        "PIDs": "5"
+      },
+      "relayforge-j3-09416ef3-controlled-1-kafka-1": {
+        "CPUPerc": "4.66%",
+        "MemPerc": "5.19%",
+        "MemUsage": "412MiB / 7.748GiB",
+        "PIDs": "118"
+      },
+      "relayforge-j3-09416ef3-controlled-1-load-receiver-1": {
+        "CPUPerc": "0.03%",
+        "MemPerc": "0.09%",
+        "MemUsage": "7.156MiB / 7.748GiB",
+        "PIDs": "11"
+      },
+      "relayforge-j3-09416ef3-controlled-1-postgres-1": {
+        "CPUPerc": "3.30%",
+        "MemPerc": "0.57%",
+        "MemUsage": "45.38MiB / 7.748GiB",
+        "PIDs": "14"
+      },
+      "relayforge-j3-09416ef3-controlled-1-redis-1": {
+        "CPUPerc": "0.24%",
+        "MemPerc": "0.20%",
+        "MemUsage": "15.79MiB / 7.748GiB",
+        "PIDs": "6"
+      },
+      "relayforge-j3-09416ef3-controlled-1-retry-scheduler-1": {
+        "CPUPerc": "0.36%",
+        "MemPerc": "3.92%",
+        "MemUsage": "311.1MiB / 7.748GiB",
+        "PIDs": "62"
+      },
+      "relayforge-j3-09416ef3-controlled-1-router-1": {
+        "CPUPerc": "45.34%",
+        "MemPerc": "3.59%",
+        "MemUsage": "284.8MiB / 7.748GiB",
+        "PIDs": "73"
+      },
+      "relayforge-j3-09416ef3-controlled-1-webhook-simulator-1": {
+        "CPUPerc": "0.32%",
+        "MemPerc": "2.24%",
+        "MemUsage": "177.6MiB / 7.748GiB",
+        "PIDs": "36"
+      }
+    },
+    "ingestion_pool": {
+      "hikaricp.connections.active": {
+        "VALUE": 0.0
+      }
+    },
+    "delivery_pool": {
+      "hikaricp.connections.active": {
+        "VALUE": 0.0
+      },
+      "hikaricp.connections.pending": {
+        "VALUE": 0.0
+      },
+      "hikaricp.connections.max": {
+        "VALUE": 8.0
+      },
+      "relayforge.delivery.handlers.active": {
+        "VALUE": 0.0
+      },
+      "relayforge.delivery.handler.duration": {
+        "COUNT": 0.0,
+        "TOTAL_TIME": 0.0,
+        "MAX": 0.0
+      },
+      "relayforge.delivery.attempt.duration": {
+        "COUNT": 0.0,
+        "TOTAL_TIME": 0.0,
+        "MAX": 0.0
+      },
+      "relayforge.delivery.outbound.duration": {
+        "COUNT": 0.0,
+        "TOTAL_TIME": 0.0,
+        "MAX": 0.0
+      }
+    },
+    "delivery_publisher": {
+      "relayforge.outbox.pending?tag=owner:delivery": {
+        "VALUE": 0.0
+      },
+      "relayforge.outbox.oldest.age.seconds?tag=owner:delivery": {
+        "VALUE": 0.0
+      },
+      "relayforge.outbox.publish?tag=owner:delivery&tag=result:published": {
+        "COUNT": 0.0
+      }
+    },
+    "analytics_consumer": {
+      "relayforge.analytics.ingest.lag.seconds": {
+        "VALUE": -1.0
+      },
+      "relayforge.kafka.consumer.lag.max?tag=group:analytics-consumer": {
+        "VALUE": 0.0
+      },
+      "relayforge.clickhouse.insert.duration": {
+        "COUNT": 0.0,
+        "TOTAL_TIME": 0.0,
+        "MAX": 0.0
+      },
+      "relayforge.clickhouse.insert?tag=result:success": {
+        "COUNT": 0.0
+      },
+      "relayforge.clickhouse.insert?tag=result:error": {
+        "COUNT": 0.0
+      },
+      "relayforge.analytics.kafka.commits": {
+        "COUNT": 0.0
+      }
+    },
+    "receiver": {
+      "requests": 0,
+      "successes": 0,
+      "failures": 0,
+      "bytes": 0
+    }
+  },
+  "during": [
+    {
+      "time_utc": "2026-11-18T16:05:46.335756+00:00",
+      "ingestion": {
+        "events": 200,
+        "registry": 200,
+        "outbox_pending": 311,
+        "database_bytes": 9836211,
+        "wal_bytes": 12120843,
+        "active_backends": 2,
+        "lock_waiters": 0,
+        "commits": 747,
+        "deadlocks": 0
+      },
+      "delivery": {
+        "active_subscriptions": 45,
+        "routing_events": 48,
+        "routing_incomplete": 0,
+        "deliveries": 144,
+        "attempts": 0,
+        "backlog": 144,
+        "succeeded": 0,
+        "dead_lettered": 0,
+        "outbox_pending": 231,
+        "outbox_by_type": {
+          "analytics.delivery-facts.v1": {
+            "pending": 115,
+            "published": 29,
+            "in_flight": 0,
+            "oldest_pending_age_s": 1.734538
+          },
+          "delivery.ready.v1": {
+            "pending": 116,
+            "published": 28,
+            "in_flight": 1,
+            "oldest_pending_age_s": 1.734981
+          }
+        },
+        "database_bytes": 12482227,
+        "wal_bytes": 23440150,
+        "active_backends": 2,
+        "lock_waiters": 1,
+        "commits": 748,
+        "deadlocks": 0
+      },
+      "kafka_lag": {
+        "relayforge.analytics.delivery-facts.v1": 12,
+        "relayforge.config.changed.v1": 0,
+        "relayforge.event.accepted.v1": 5
+      },
+      "kafka_positions": {
+        "relayforge.analytics.delivery-facts.v1": {
+          "committed": 24,
+          "end": 36,
+          "lag": 12
+        },
+        "relayforge.config.changed.v1": {
+          "committed": 45,
+          "end": 45,
+          "lag": 0
+        },
+        "relayforge.event.accepted.v1": {
+          "committed": 24,
+          "end": 29,
+          "lag": 5
+        }
+      },
+      "redis": {
+        "connected_clients": 4,
+        "used_memory": 1518728,
+        "instantaneous_ops_per_sec": 334,
+        "keyspace_hits": 376,
+        "keyspace_misses": 81
+      },
+      "clickhouse": {
+        "active_part_rows": 62
+      },
+      "clickhouse_queries": {
+        "recent_selects": 14,
+        "recent_select_p95_ms": 20.0
+      },
+      "docker_stats": {
+        "relayforge-j3-09416ef3-controlled-1-analytics-api-1": {
+          "CPUPerc": "59.21%",
+          "MemPerc": "4.43%",
+          "MemUsage": "351.3MiB / 7.748GiB",
+          "PIDs": "82"
+        },
+        "relayforge-j3-09416ef3-controlled-1-analytics-consumer-1": {
+          "CPUPerc": "34.83%",
+          "MemPerc": "3.49%",
+          "MemUsage": "276.8MiB / 7.748GiB",
+          "PIDs": "69"
+        },
+        "relayforge-j3-09416ef3-controlled-1-clickhouse-1": {
+          "CPUPerc": "49.59%",
+          "MemPerc": "6.58%",
+          "MemUsage": "522.1MiB / 7.748GiB",
+          "PIDs": "215"
+        },
+        "relayforge-j3-09416ef3-controlled-1-control-plane-1": {
+          "CPUPerc": "94.44%",
+          "MemPerc": "4.70%",
+          "MemUsage": "372.7MiB / 7.748GiB",
+          "PIDs": "138"
+        },
+        "relayforge-j3-09416ef3-controlled-1-control-publisher-1": {
+          "CPUPerc": "3.44%",
+          "MemPerc": "2.66%",
+          "MemUsage": "210.8MiB / 7.748GiB",
+          "PIDs": "63"
+        },
+        "relayforge-j3-09416ef3-controlled-1-delivery-api-1": {
+          "CPUPerc": "13.50%",
+          "MemPerc": "4.76%",
+          "MemUsage": "377.6MiB / 7.748GiB",
+          "PIDs": "79"
+        },
+        "relayforge-j3-09416ef3-controlled-1-delivery-publisher-1": {
+          "CPUPerc": "16.50%",
+          "MemPerc": "3.84%",
+          "MemUsage": "304.9MiB / 7.748GiB",
+          "PIDs": "64"
+        },
+        "relayforge-j3-09416ef3-controlled-1-delivery-worker-1": {
+          "CPUPerc": "68.11%",
+          "MemPerc": "4.65%",
+          "MemUsage": "369.1MiB / 7.748GiB",
+          "PIDs": "125"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-1": {
+          "CPUPerc": "83.02%",
+          "MemPerc": "6.39%",
+          "MemUsage": "506.9MiB / 7.748GiB",
+          "PIDs": "193"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-primary-1": {
+          "CPUPerc": "11.99%",
+          "MemPerc": "0.70%",
+          "MemUsage": "55.31MiB / 7.748GiB",
+          "PIDs": "17"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-publisher-1": {
+          "CPUPerc": "54.96%",
+          "MemPerc": "3.23%",
+          "MemUsage": "256.3MiB / 7.748GiB",
+          "PIDs": "64"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-standby-1": {
+          "CPUPerc": "1.63%",
+          "MemPerc": "0.34%",
+          "MemUsage": "27.21MiB / 7.748GiB",
+          "PIDs": "5"
+        },
+        "relayforge-j3-09416ef3-controlled-1-kafka-1": {
+          "CPUPerc": "55.60%",
+          "MemPerc": "3.32%",
+          "MemUsage": "263MiB / 7.748GiB",
+          "PIDs": "141"
+        },
+        "relayforge-j3-09416ef3-controlled-1-load-receiver-1": {
+          "CPUPerc": "12.58%",
+          "MemPerc": "0.15%",
+          "MemUsage": "12.01MiB / 7.748GiB",
+          "PIDs": "11"
+        },
+        "relayforge-j3-09416ef3-controlled-1-postgres-1": {
+          "CPUPerc": "23.96%",
+          "MemPerc": "1.56%",
+          "MemUsage": "124.1MiB / 7.748GiB",
+          "PIDs": "32"
+        },
+        "relayforge-j3-09416ef3-controlled-1-redis-1": {
+          "CPUPerc": "1.16%",
+          "MemPerc": "0.11%",
+          "MemUsage": "8.707MiB / 7.748GiB",
+          "PIDs": "6"
+        },
+        "relayforge-j3-09416ef3-controlled-1-retry-scheduler-1": {
+          "CPUPerc": "36.64%",
+          "MemPerc": "3.81%",
+          "MemUsage": "302MiB / 7.748GiB",
+          "PIDs": "62"
+        },
+        "relayforge-j3-09416ef3-controlled-1-router-1": {
+          "CPUPerc": "61.37%",
+          "MemPerc": "4.18%",
+          "MemUsage": "331.3MiB / 7.748GiB",
+          "PIDs": "105"
+        },
+        "relayforge-j3-09416ef3-controlled-1-webhook-simulator-1": {
+          "CPUPerc": "0.08%",
+          "MemPerc": "2.42%",
+          "MemUsage": "191.9MiB / 7.748GiB",
+          "PIDs": "36"
+        }
+      },
+      "ingestion_pool": {
+        "hikaricp.connections.active": {
+          "VALUE": 8.0
+        }
+      },
+      "delivery_pool": {
+        "hikaricp.connections.active": {
+          "VALUE": 2.0
+        },
+        "hikaricp.connections.pending": {
+          "VALUE": 0.0
+        },
+        "hikaricp.connections.max": {
+          "VALUE": 8.0
+        },
+        "relayforge.delivery.handlers.active": {
+          "VALUE": 8.0
+        },
+        "relayforge.delivery.handler.duration": {
+          "COUNT": 53.0,
+          "TOTAL_TIME": 78.212130907,
+          "MAX": 2.986955085
+        },
+        "relayforge.delivery.attempt.duration": {
+          "COUNT": 54.0,
+          "TOTAL_TIME": 20.034519298,
+          "MAX": 0.773053417
+        },
+        "relayforge.delivery.outbound.duration": {
+          "COUNT": 54.0,
+          "TOTAL_TIME": 15.443713298,
+          "MAX": 0.625368333
+        }
+      },
+      "delivery_publisher": {
+        "relayforge.outbox.pending?tag=owner:delivery": {
+          "VALUE": 402.0
+        },
+        "relayforge.outbox.oldest.age.seconds?tag=owner:delivery": {
+          "VALUE": 6.0
+        },
+        "relayforge.outbox.publish?tag=owner:delivery&tag=result:published": {
+          "COUNT": 300.0
+        }
+      },
+      "analytics_consumer": {
+        "relayforge.analytics.ingest.lag.seconds": {
+          "VALUE": 14.0
+        },
+        "relayforge.kafka.consumer.lag.max?tag=group:analytics-consumer": {
+          "VALUE": 107.0
+        },
+        "relayforge.clickhouse.insert.duration": {
+          "COUNT": 311.0,
+          "TOTAL_TIME": 15.493630923,
+          "MAX": 0.358386917
+        },
+        "relayforge.clickhouse.insert?tag=result:success": {
+          "COUNT": 311.0
+        },
+        "relayforge.clickhouse.insert?tag=result:error": {
+          "COUNT": 0.0
+        },
+        "relayforge.analytics.kafka.commits": {
+          "COUNT": 25.0
+        }
+      },
+      "receiver": {
+        "requests": 111,
+        "successes": 98,
+        "failures": 10,
+        "bytes": 133197
+      }
+    }
+  ],
+  "after": {
+    "time_utc": "2026-11-18T16:08:11.144198+00:00",
+    "ingestion": {
+      "events": 990,
+      "registry": 990,
+      "outbox_pending": 0,
+      "database_bytes": 12916403,
+      "wal_bytes": 18217453,
+      "active_backends": 1,
+      "lock_waiters": 0,
+      "commits": 14389,
+      "deadlocks": 0
+    },
+    "delivery": {
+      "active_subscriptions": 45,
+      "routing_events": 990,
+      "routing_incomplete": 0,
+      "deliveries": 2970,
+      "attempts": 3110,
+      "backlog": 171,
+      "succeeded": 2799,
+      "dead_lettered": 0,
+      "outbox_pending": 3470,
+      "outbox_by_type": {
+        "delivery.ready.v1": {
+          "pending": 170,
+          "published": 3110,
+          "in_flight": 0,
+          "oldest_pending_age_s": 74.92177
+        },
+        "analytics.delivery-facts.v1": {
+          "pending": 3300,
+          "published": 5890,
+          "in_flight": 0,
+          "oldest_pending_age_s": 74.930657
+        }
+      },
+      "database_bytes": 28284595,
+      "wal_bytes": 66060164,
+      "active_backends": 2,
+      "lock_waiters": 0,
+      "commits": 42149,
+      "deadlocks": 0
+    },
+    "kafka_lag": {
+      "relayforge.analytics.delivery-facts.v1": 199,
+      "relayforge.delivery.ready.v1": 0,
+      "relayforge.config.changed.v1": 0,
+      "relayforge.event.accepted.v1": 0
+    },
+    "kafka_positions": {
+      "relayforge.analytics.delivery-facts.v1": {
+        "committed": 6650,
+        "end": 6849,
+        "lag": 199
+      },
+      "relayforge.delivery.ready.v1": {
+        "committed": 3110,
+        "end": 3110,
+        "lag": 0
+      },
+      "relayforge.config.changed.v1": {
+        "committed": 45,
+        "end": 45,
+        "lag": 0
+      },
+      "relayforge.event.accepted.v1": {
+        "committed": 990,
+        "end": 990,
+        "lag": 0
+      }
+    },
+    "redis": {
+      "connected_clients": 4,
+      "used_memory": 1505240,
+      "instantaneous_ops_per_sec": 15,
+      "keyspace_hits": 3958,
+      "keyspace_misses": 1150
+    },
+    "clickhouse": {
+      "active_part_rows": 6748
+    },
+    "clickhouse_queries": {
+      "recent_selects": 6759,
+      "recent_select_p95_ms": 19.0
+    },
+    "docker_stats": {
+      "relayforge-j3-09416ef3-controlled-1-analytics-api-1": {
+        "CPUPerc": "0.43%",
+        "MemPerc": "2.51%",
+        "MemUsage": "199MiB / 7.748GiB",
+        "PIDs": "63"
+      },
+      "relayforge-j3-09416ef3-controlled-1-analytics-consumer-1": {
+        "CPUPerc": "15.38%",
+        "MemPerc": "3.56%",
+        "MemUsage": "282.1MiB / 7.748GiB",
+        "PIDs": "69"
+      },
+      "relayforge-j3-09416ef3-controlled-1-clickhouse-1": {
+        "CPUPerc": "168.19%",
+        "MemPerc": "12.72%",
+        "MemUsage": "1009MiB / 7.748GiB",
+        "PIDs": "215"
+      },
+      "relayforge-j3-09416ef3-controlled-1-control-plane-1": {
+        "CPUPerc": "2.58%",
+        "MemPerc": "4.69%",
+        "MemUsage": "372.1MiB / 7.748GiB",
+        "PIDs": "119"
+      },
+      "relayforge-j3-09416ef3-controlled-1-control-publisher-1": {
+        "CPUPerc": "0.76%",
+        "MemPerc": "2.61%",
+        "MemUsage": "207.5MiB / 7.748GiB",
+        "PIDs": "63"
+      },
+      "relayforge-j3-09416ef3-controlled-1-delivery-api-1": {
+        "CPUPerc": "0.16%",
+        "MemPerc": "3.10%",
+        "MemUsage": "246.1MiB / 7.748GiB",
+        "PIDs": "61"
+      },
+      "relayforge-j3-09416ef3-controlled-1-delivery-publisher-1": {
+        "CPUPerc": "10.25%",
+        "MemPerc": "3.76%",
+        "MemUsage": "298.6MiB / 7.748GiB",
+        "PIDs": "63"
+      },
+      "relayforge-j3-09416ef3-controlled-1-delivery-worker-1": {
+        "CPUPerc": "7.67%",
+        "MemPerc": "4.44%",
+        "MemUsage": "352.5MiB / 7.748GiB",
+        "PIDs": "103"
+      },
+      "relayforge-j3-09416ef3-controlled-1-ingestion-1": {
+        "CPUPerc": "1.49%",
+        "MemPerc": "6.11%",
+        "MemUsage": "484.6MiB / 7.748GiB",
+        "PIDs": "142"
+      },
+      "relayforge-j3-09416ef3-controlled-1-ingestion-primary-1": {
+        "CPUPerc": "0.75%",
+        "MemPerc": "0.44%",
+        "MemUsage": "34.71MiB / 7.748GiB",
+        "PIDs": "17"
+      },
+      "relayforge-j3-09416ef3-controlled-1-ingestion-publisher-1": {
+        "CPUPerc": "0.47%",
+        "MemPerc": "3.19%",
+        "MemUsage": "253.2MiB / 7.748GiB",
+        "PIDs": "63"
+      },
+      "relayforge-j3-09416ef3-controlled-1-ingestion-standby-1": {
+        "CPUPerc": "0.00%",
+        "MemPerc": "0.26%",
+        "MemUsage": "20.74MiB / 7.748GiB",
+        "PIDs": "5"
+      },
+      "relayforge-j3-09416ef3-controlled-1-kafka-1": {
+        "CPUPerc": "10.14%",
+        "MemPerc": "4.48%",
+        "MemUsage": "355.5MiB / 7.748GiB",
+        "PIDs": "118"
+      },
+      "relayforge-j3-09416ef3-controlled-1-load-receiver-1": {
+        "CPUPerc": "0.49%",
+        "MemPerc": "0.15%",
+        "MemUsage": "12.07MiB / 7.748GiB",
+        "PIDs": "11"
+      },
+      "relayforge-j3-09416ef3-controlled-1-postgres-1": {
+        "CPUPerc": "55.86%",
+        "MemPerc": "2.01%",
+        "MemUsage": "159.3MiB / 7.748GiB",
+        "PIDs": "32"
+      },
+      "relayforge-j3-09416ef3-controlled-1-redis-1": {
+        "CPUPerc": "0.46%",
+        "MemPerc": "0.16%",
+        "MemUsage": "13.03MiB / 7.748GiB",
+        "PIDs": "6"
+      },
+      "relayforge-j3-09416ef3-controlled-1-retry-scheduler-1": {
+        "CPUPerc": "69.55%",
+        "MemPerc": "4.26%",
+        "MemUsage": "337.8MiB / 7.748GiB",
+        "PIDs": "79"
+      },
+      "relayforge-j3-09416ef3-controlled-1-router-1": {
+        "CPUPerc": "0.85%",
+        "MemPerc": "3.55%",
+        "MemUsage": "281.9MiB / 7.748GiB",
+        "PIDs": "74"
+      },
+      "relayforge-j3-09416ef3-controlled-1-webhook-simulator-1": {
+        "CPUPerc": "0.16%",
+        "MemPerc": "1.04%",
+        "MemUsage": "82.43MiB / 7.748GiB",
+        "PIDs": "37"
+      }
+    },
+    "ingestion_pool": {
+      "hikaricp.connections.active": {
+        "VALUE": 0.0
+      }
+    },
+    "delivery_pool": {
+      "hikaricp.connections.active": {
+        "VALUE": 0.0
+      },
+      "hikaricp.connections.pending": {
+        "VALUE": 0.0
+      },
+      "hikaricp.connections.max": {
+        "VALUE": 8.0
+      },
+      "relayforge.delivery.handlers.active": {
+        "VALUE": 0.0
+      },
+      "relayforge.delivery.handler.duration": {
+        "COUNT": 3137.0,
+        "TOTAL_TIME": 967.683040558,
+        "MAX": 1.677280126
+      },
+      "relayforge.delivery.attempt.duration": {
+        "COUNT": 3137.0,
+        "TOTAL_TIME": 686.244444528,
+        "MAX": 0.573782875
+      },
+      "relayforge.delivery.outbound.duration": {
+        "COUNT": 3137.0,
+        "TOTAL_TIME": 649.168553369,
+        "MAX": 0.37741325
+      }
+    },
+    "delivery_publisher": {
+      "relayforge.outbox.pending?tag=owner:delivery": {
+        "VALUE": 3470.0
+      },
+      "relayforge.outbox.oldest.age.seconds?tag=owner:delivery": {
+        "VALUE": 75.0
+      },
+      "relayforge.outbox.publish?tag=owner:delivery&tag=result:published": {
+        "COUNT": 9700.0
+      }
+    },
+    "analytics_consumer": {
+      "relayforge.analytics.ingest.lag.seconds": {
+        "VALUE": 79.0
+      },
+      "relayforge.kafka.consumer.lag.max?tag=group:analytics-consumer": {
+        "VALUE": 244.0
+      },
+      "relayforge.clickhouse.insert.duration": {
+        "COUNT": 7385.0,
+        "TOTAL_TIME": 144.731389228,
+        "MAX": 0.4603735
+      },
+      "relayforge.clickhouse.insert?tag=result:success": {
+        "COUNT": 7386.0
+      },
+      "relayforge.clickhouse.insert?tag=result:error": {
+        "COUNT": 0.0
+      },
+      "relayforge.analytics.kafka.commits": {
+        "COUNT": 872.0
+      }
+    },
+    "receiver": {
+      "requests": 3163,
+      "successes": 2844,
+      "failures": 316,
+      "bytes": 3795582
+    }
+  },
+  "drain_samples": [
+    {
+      "time_utc": "2026-11-18T16:06:37.023493+00:00",
+      "ingestion": {
+        "events": 990,
+        "registry": 990,
+        "outbox_pending": 0,
+        "database_bytes": 12842675,
+        "wal_bytes": 18153014,
+        "active_backends": 1,
+        "lock_waiters": 0,
+        "commits": 9061,
+        "deadlocks": 0
+      },
+      "delivery": {
+        "active_subscriptions": 45,
+        "routing_events": 990,
+        "routing_incomplete": 0,
+        "deliveries": 2970,
+        "attempts": 869,
+        "backlog": 2193,
+        "succeeded": 777,
+        "dead_lettered": 0,
+        "outbox_pending": 5696,
+        "outbox_by_type": {
+          "delivery.ready.v1": {
+            "pending": 2180,
+            "published": 872,
+            "in_flight": 1,
+            "oldest_pending_age_s": 31.717079
+          },
+          "analytics.delivery-facts.v1": {
+            "pending": 3516,
+            "published": 1180,
+            "in_flight": 0,
+            "oldest_pending_age_s": 31.716645
+          }
+        },
+        "database_bytes": 21911219,
+        "wal_bytes": 43061131,
+        "active_backends": 1,
+        "lock_waiters": 0,
+        "commits": 13935,
+        "deadlocks": 0
+      },
+      "kafka_lag": {
+        "relayforge.analytics.delivery-facts.v1": 781,
+        "relayforge.delivery.ready.v1": 8,
+        "relayforge.config.changed.v1": 0,
+        "relayforge.event.accepted.v1": 0
+      },
+      "kafka_positions": {
+        "relayforge.analytics.delivery-facts.v1": {
+          "committed": 1357,
+          "end": 2138,
+          "lag": 781
+        },
+        "relayforge.delivery.ready.v1": {
+          "committed": 840,
+          "end": 848,
+          "lag": 8
+        },
+        "relayforge.config.changed.v1": {
+          "committed": 45,
+          "end": 45,
+          "lag": 0
+        },
+        "relayforge.event.accepted.v1": {
+          "committed": 990,
+          "end": 990,
+          "lag": 0
+        }
+      },
+      "redis": {
+        "connected_clients": 4,
+        "used_memory": 1493424,
+        "instantaneous_ops_per_sec": 176,
+        "keyspace_hits": 2502,
+        "keyspace_misses": 369
+      },
+      "clickhouse": {
+        "active_part_rows": 1430
+      },
+      "clickhouse_queries": {
+        "recent_selects": 1318,
+        "recent_select_p95_ms": 35.0
+      },
+      "docker_stats": {
+        "relayforge-j3-09416ef3-controlled-1-analytics-api-1": {
+          "CPUPerc": "0.21%",
+          "MemPerc": "2.49%",
+          "MemUsage": "197.6MiB / 7.748GiB",
+          "PIDs": "63"
+        },
+        "relayforge-j3-09416ef3-controlled-1-analytics-consumer-1": {
+          "CPUPerc": "21.40%",
+          "MemPerc": "3.40%",
+          "MemUsage": "269.9MiB / 7.748GiB",
+          "PIDs": "69"
+        },
+        "relayforge-j3-09416ef3-controlled-1-clickhouse-1": {
+          "CPUPerc": "51.37%",
+          "MemPerc": "10.07%",
+          "MemUsage": "799.2MiB / 7.748GiB",
+          "PIDs": "215"
+        },
+        "relayforge-j3-09416ef3-controlled-1-control-plane-1": {
+          "CPUPerc": "59.71%",
+          "MemPerc": "4.24%",
+          "MemUsage": "336.2MiB / 7.748GiB",
+          "PIDs": "119"
+        },
+        "relayforge-j3-09416ef3-controlled-1-control-publisher-1": {
+          "CPUPerc": "5.55%",
+          "MemPerc": "2.50%",
+          "MemUsage": "198.7MiB / 7.748GiB",
+          "PIDs": "63"
+        },
+        "relayforge-j3-09416ef3-controlled-1-delivery-api-1": {
+          "CPUPerc": "1.30%",
+          "MemPerc": "3.03%",
+          "MemUsage": "240.1MiB / 7.748GiB",
+          "PIDs": "61"
+        },
+        "relayforge-j3-09416ef3-controlled-1-delivery-publisher-1": {
+          "CPUPerc": "17.54%",
+          "MemPerc": "3.71%",
+          "MemUsage": "294.1MiB / 7.748GiB",
+          "PIDs": "63"
+        },
+        "relayforge-j3-09416ef3-controlled-1-delivery-worker-1": {
+          "CPUPerc": "113.11%",
+          "MemPerc": "5.02%",
+          "MemUsage": "398.5MiB / 7.748GiB",
+          "PIDs": "122"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-1": {
+          "CPUPerc": "78.19%",
+          "MemPerc": "6.83%",
+          "MemUsage": "541.9MiB / 7.748GiB",
+          "PIDs": "194"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-primary-1": {
+          "CPUPerc": "9.89%",
+          "MemPerc": "0.55%",
+          "MemUsage": "44.03MiB / 7.748GiB",
+          "PIDs": "17"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-publisher-1": {
+          "CPUPerc": "39.52%",
+          "MemPerc": "3.15%",
+          "MemUsage": "250.3MiB / 7.748GiB",
+          "PIDs": "63"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-standby-1": {
+          "CPUPerc": "5.96%",
+          "MemPerc": "0.28%",
+          "MemUsage": "22.16MiB / 7.748GiB",
+          "PIDs": "5"
+        },
+        "relayforge-j3-09416ef3-controlled-1-kafka-1": {
+          "CPUPerc": "83.75%",
+          "MemPerc": "3.77%",
+          "MemUsage": "299.4MiB / 7.748GiB",
+          "PIDs": "138"
+        },
+        "relayforge-j3-09416ef3-controlled-1-load-receiver-1": {
+          "CPUPerc": "1.65%",
+          "MemPerc": "0.16%",
+          "MemUsage": "12.46MiB / 7.748GiB",
+          "PIDs": "11"
+        },
+        "relayforge-j3-09416ef3-controlled-1-postgres-1": {
+          "CPUPerc": "44.69%",
+          "MemPerc": "1.84%",
+          "MemUsage": "146MiB / 7.748GiB",
+          "PIDs": "32"
+        },
+        "relayforge-j3-09416ef3-controlled-1-redis-1": {
+          "CPUPerc": "1.11%",
+          "MemPerc": "0.12%",
+          "MemUsage": "9.586MiB / 7.748GiB",
+          "PIDs": "6"
+        },
+        "relayforge-j3-09416ef3-controlled-1-retry-scheduler-1": {
+          "CPUPerc": "0.51%",
+          "MemPerc": "3.08%",
+          "MemUsage": "244.2MiB / 7.748GiB",
+          "PIDs": "62"
+        },
+        "relayforge-j3-09416ef3-controlled-1-router-1": {
+          "CPUPerc": "34.65%",
+          "MemPerc": "3.54%",
+          "MemUsage": "281MiB / 7.748GiB",
+          "PIDs": "79"
+        },
+        "relayforge-j3-09416ef3-controlled-1-webhook-simulator-1": {
+          "CPUPerc": "0.10%",
+          "MemPerc": "1.05%",
+          "MemUsage": "83.04MiB / 7.748GiB",
+          "PIDs": "36"
+        }
+      },
+      "ingestion_pool": {
+        "hikaricp.connections.active": {
+          "VALUE": 0.0
+        }
+      },
+      "delivery_pool": {
+        "hikaricp.connections.active": {
+          "VALUE": 0.0
+        },
+        "hikaricp.connections.pending": {
+          "VALUE": 0.0
+        },
+        "hikaricp.connections.max": {
+          "VALUE": 8.0
+        },
+        "relayforge.delivery.handlers.active": {
+          "VALUE": 7.0
+        },
+        "relayforge.delivery.handler.duration": {
+          "COUNT": 1008.0,
+          "TOTAL_TIME": 434.704976039,
+          "MAX": 2.986955085
+        },
+        "relayforge.delivery.attempt.duration": {
+          "COUNT": 1008.0,
+          "TOTAL_TIME": 236.661454792,
+          "MAX": 0.773053417
+        },
+        "relayforge.delivery.outbound.duration": {
+          "COUNT": 1008.0,
+          "TOTAL_TIME": 215.645316772,
+          "MAX": 0.625368333
+        }
+      },
+      "delivery_publisher": {
+        "relayforge.outbox.pending?tag=owner:delivery": {
+          "VALUE": 5660.0
+        },
+        "relayforge.outbox.oldest.age.seconds?tag=owner:delivery": {
+          "VALUE": 34.0
+        },
+        "relayforge.outbox.publish?tag=owner:delivery&tag=result:published": {
+          "COUNT": 2500.0
+        }
+      },
+      "analytics_consumer": {
+        "relayforge.analytics.ingest.lag.seconds": {
+          "VALUE": 43.0
+        },
+        "relayforge.kafka.consumer.lag.max?tag=group:analytics-consumer": {
+          "VALUE": 662.0
+        },
+        "relayforge.clickhouse.insert.duration": {
+          "COUNT": 1847.0,
+          "TOTAL_TIME": 57.752158986,
+          "MAX": 0.498236959
+        },
+        "relayforge.clickhouse.insert?tag=result:success": {
+          "COUNT": 1848.0
+        },
+        "relayforge.clickhouse.insert?tag=result:error": {
+          "COUNT": 0.0
+        },
+        "relayforge.analytics.kafka.commits": {
+          "COUNT": 75.0
+        }
+      },
+      "receiver": {
+        "requests": 1102,
+        "successes": 985,
+        "failures": 109,
+        "bytes": 1322397
+      }
+    },
+    {
+      "time_utc": "2026-11-18T16:06:55.850244+00:00",
+      "ingestion": {
+        "events": 990,
+        "registry": 990,
+        "outbox_pending": 0,
+        "database_bytes": 12842675,
+        "wal_bytes": 18167124,
+        "active_backends": 1,
+        "lock_waiters": 0,
+        "commits": 10212,
+        "deadlocks": 0
+      },
+      "delivery": {
+        "active_subscriptions": 45,
+        "routing_events": 990,
+        "routing_incomplete": 0,
+        "deliveries": 2970,
+        "attempts": 1373,
+        "backlog": 1741,
+        "succeeded": 1229,
+        "dead_lettered": 0,
+        "outbox_pending": 5472,
+        "outbox_by_type": {
+          "delivery.ready.v1": {
+            "pending": 1729,
+            "published": 1376,
+            "in_flight": 0,
+            "oldest_pending_age_s": 44.506285
+          },
+          "analytics.delivery-facts.v1": {
+            "pending": 3743,
+            "published": 1957,
+            "in_flight": 0,
+            "oldest_pending_age_s": 44.506575
+          }
+        },
+        "database_bytes": 23443123,
+        "wal_bytes": 48104959,
+        "active_backends": 1,
+        "lock_waiters": 0,
+        "commits": 19777,
+        "deadlocks": 0
+      },
+      "kafka_lag": {
+        "relayforge.analytics.delivery-facts.v1": 508,
+        "relayforge.delivery.ready.v1": 11,
+        "relayforge.config.changed.v1": 0,
+        "relayforge.event.accepted.v1": 0
+      },
+      "kafka_positions": {
+        "relayforge.analytics.delivery-facts.v1": {
+          "committed": 2398,
+          "end": 2906,
+          "lag": 508
+        },
+        "relayforge.delivery.ready.v1": {
+          "committed": 1338,
+          "end": 1349,
+          "lag": 11
+        },
+        "relayforge.config.changed.v1": {
+          "committed": 45,
+          "end": 45,
+          "lag": 0
+        },
+        "relayforge.event.accepted.v1": {
+          "committed": 990,
+          "end": 990,
+          "lag": 0
+        }
+      },
+      "redis": {
+        "connected_clients": 4,
+        "used_memory": 1494208,
+        "instantaneous_ops_per_sec": 232,
+        "keyspace_hits": 2840,
+        "keyspace_misses": 533
+      },
+      "clickhouse": {
+        "active_part_rows": 2491
+      },
+      "clickhouse_queries": {
+        "recent_selects": 2118,
+        "recent_select_p95_ms": 29.0
+      },
+      "docker_stats": {
+        "relayforge-j3-09416ef3-controlled-1-analytics-api-1": {
+          "CPUPerc": "0.15%",
+          "MemPerc": "2.49%",
+          "MemUsage": "197.6MiB / 7.748GiB",
+          "PIDs": "63"
+        },
+        "relayforge-j3-09416ef3-controlled-1-analytics-consumer-1": {
+          "CPUPerc": "37.67%",
+          "MemPerc": "3.43%",
+          "MemUsage": "272.5MiB / 7.748GiB",
+          "PIDs": "69"
+        },
+        "relayforge-j3-09416ef3-controlled-1-clickhouse-1": {
+          "CPUPerc": "116.80%",
+          "MemPerc": "12.12%",
+          "MemUsage": "961.6MiB / 7.748GiB",
+          "PIDs": "215"
+        },
+        "relayforge-j3-09416ef3-controlled-1-control-plane-1": {
+          "CPUPerc": "46.38%",
+          "MemPerc": "4.66%",
+          "MemUsage": "369.6MiB / 7.748GiB",
+          "PIDs": "119"
+        },
+        "relayforge-j3-09416ef3-controlled-1-control-publisher-1": {
+          "CPUPerc": "0.60%",
+          "MemPerc": "2.51%",
+          "MemUsage": "199.2MiB / 7.748GiB",
+          "PIDs": "63"
+        },
+        "relayforge-j3-09416ef3-controlled-1-delivery-api-1": {
+          "CPUPerc": "0.14%",
+          "MemPerc": "3.05%",
+          "MemUsage": "241.9MiB / 7.748GiB",
+          "PIDs": "61"
+        },
+        "relayforge-j3-09416ef3-controlled-1-delivery-publisher-1": {
+          "CPUPerc": "12.35%",
+          "MemPerc": "3.71%",
+          "MemUsage": "294.7MiB / 7.748GiB",
+          "PIDs": "63"
+        },
+        "relayforge-j3-09416ef3-controlled-1-delivery-worker-1": {
+          "CPUPerc": "66.79%",
+          "MemPerc": "4.38%",
+          "MemUsage": "347.6MiB / 7.748GiB",
+          "PIDs": "104"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-1": {
+          "CPUPerc": "5.59%",
+          "MemPerc": "6.07%",
+          "MemUsage": "481.6MiB / 7.748GiB",
+          "PIDs": "176"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-primary-1": {
+          "CPUPerc": "3.37%",
+          "MemPerc": "0.53%",
+          "MemUsage": "42.16MiB / 7.748GiB",
+          "PIDs": "17"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-publisher-1": {
+          "CPUPerc": "0.40%",
+          "MemPerc": "3.14%",
+          "MemUsage": "249.5MiB / 7.748GiB",
+          "PIDs": "63"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-standby-1": {
+          "CPUPerc": "0.00%",
+          "MemPerc": "0.28%",
+          "MemUsage": "22.2MiB / 7.748GiB",
+          "PIDs": "5"
+        },
+        "relayforge-j3-09416ef3-controlled-1-kafka-1": {
+          "CPUPerc": "37.38%",
+          "MemPerc": "2.81%",
+          "MemUsage": "223MiB / 7.748GiB",
+          "PIDs": "118"
+        },
+        "relayforge-j3-09416ef3-controlled-1-load-receiver-1": {
+          "CPUPerc": "14.18%",
+          "MemPerc": "0.14%",
+          "MemUsage": "11.47MiB / 7.748GiB",
+          "PIDs": "11"
+        },
+        "relayforge-j3-09416ef3-controlled-1-postgres-1": {
+          "CPUPerc": "68.06%",
+          "MemPerc": "1.89%",
+          "MemUsage": "150.2MiB / 7.748GiB",
+          "PIDs": "32"
+        },
+        "relayforge-j3-09416ef3-controlled-1-redis-1": {
+          "CPUPerc": "2.86%",
+          "MemPerc": "0.13%",
+          "MemUsage": "10.1MiB / 7.748GiB",
+          "PIDs": "6"
+        },
+        "relayforge-j3-09416ef3-controlled-1-retry-scheduler-1": {
+          "CPUPerc": "0.64%",
+          "MemPerc": "3.10%",
+          "MemUsage": "246.1MiB / 7.748GiB",
+          "PIDs": "62"
+        },
+        "relayforge-j3-09416ef3-controlled-1-router-1": {
+          "CPUPerc": "0.93%",
+          "MemPerc": "3.55%",
+          "MemUsage": "281.9MiB / 7.748GiB",
+          "PIDs": "79"
+        },
+        "relayforge-j3-09416ef3-controlled-1-webhook-simulator-1": {
+          "CPUPerc": "0.09%",
+          "MemPerc": "1.02%",
+          "MemUsage": "81.19MiB / 7.748GiB",
+          "PIDs": "36"
+        }
+      },
+      "ingestion_pool": {
+        "hikaricp.connections.active": {
+          "VALUE": 0.0
+        }
+      },
+      "delivery_pool": {
+        "hikaricp.connections.active": {
+          "VALUE": 1.0
+        },
+        "hikaricp.connections.pending": {
+          "VALUE": 0.0
+        },
+        "hikaricp.connections.max": {
+          "VALUE": 8.0
+        },
+        "relayforge.delivery.handlers.active": {
+          "VALUE": 8.0
+        },
+        "relayforge.delivery.handler.duration": {
+          "COUNT": 1554.0,
+          "TOTAL_TIME": 572.1850729,
+          "MAX": 2.986955085
+        },
+        "relayforge.delivery.attempt.duration": {
+          "COUNT": 1554.0,
+          "TOTAL_TIME": 351.828255861,
+          "MAX": 0.773053417
+        },
+        "relayforge.delivery.outbound.duration": {
+          "COUNT": 1556.0,
+          "TOTAL_TIME": 327.377032042,
+          "MAX": 0.625368333
+        }
+      },
+      "delivery_publisher": {
+        "relayforge.outbox.pending?tag=owner:delivery": {
+          "VALUE": 5364.0
+        },
+        "relayforge.outbox.oldest.age.seconds?tag=owner:delivery": {
+          "VALUE": 47.0
+        },
+        "relayforge.outbox.publish?tag=owner:delivery&tag=result:published": {
+          "COUNT": 3900.0
+        }
+      },
+      "analytics_consumer": {
+        "relayforge.analytics.ingest.lag.seconds": {
+          "VALUE": 53.0
+        },
+        "relayforge.kafka.consumer.lag.max?tag=group:analytics-consumer": {
+          "VALUE": 662.0
+        },
+        "relayforge.clickhouse.insert.duration": {
+          "COUNT": 3110.0,
+          "TOTAL_TIME": 75.605518055,
+          "MAX": 0.498236959
+        },
+        "relayforge.clickhouse.insert?tag=result:success": {
+          "COUNT": 3112.0
+        },
+        "relayforge.clickhouse.insert?tag=result:error": {
+          "COUNT": 0.0
+        },
+        "relayforge.analytics.kafka.commits": {
+          "COUNT": 115.0
+        }
+      },
+      "receiver": {
+        "requests": 1654,
+        "successes": 1484,
+        "failures": 164,
+        "bytes": 1984788
+      }
+    },
+    {
+      "time_utc": "2026-11-18T16:07:14.592049+00:00",
+      "ingestion": {
+        "events": 990,
+        "registry": 990,
+        "outbox_pending": 0,
+        "database_bytes": 12842675,
+        "wal_bytes": 18167124,
+        "active_backends": 1,
+        "lock_waiters": 0,
+        "commits": 11547,
+        "deadlocks": 0
+      },
+      "delivery": {
+        "active_subscriptions": 45,
+        "routing_events": 990,
+        "routing_incomplete": 0,
+        "deliveries": 2970,
+        "attempts": 1939,
+        "backlog": 1226,
+        "succeeded": 1744,
+        "dead_lettered": 0,
+        "outbox_pending": 5238,
+        "outbox_by_type": {
+          "delivery.ready.v1": {
+            "pending": 1213,
+            "published": 1950,
+            "in_flight": 0,
+            "oldest_pending_age_s": 57.193311
+          },
+          "analytics.delivery-facts.v1": {
+            "pending": 4025,
+            "published": 2819,
+            "in_flight": 0,
+            "oldest_pending_age_s": 57.189697
+          }
+        },
+        "database_bytes": 25327283,
+        "wal_bytes": 53478811,
+        "active_backends": 3,
+        "lock_waiters": 1,
+        "commits": 26233,
+        "deadlocks": 0
+      },
+      "kafka_lag": {
+        "relayforge.analytics.delivery-facts.v1": 102,
+        "relayforge.delivery.ready.v1": 8,
+        "relayforge.config.changed.v1": 0,
+        "relayforge.event.accepted.v1": 0
+      },
+      "kafka_positions": {
+        "relayforge.analytics.delivery-facts.v1": {
+          "committed": 3666,
+          "end": 3768,
+          "lag": 102
+        },
+        "relayforge.delivery.ready.v1": {
+          "committed": 1914,
+          "end": 1922,
+          "lag": 8
+        },
+        "relayforge.config.changed.v1": {
+          "committed": 45,
+          "end": 45,
+          "lag": 0
+        },
+        "relayforge.event.accepted.v1": {
+          "committed": 990,
+          "end": 990,
+          "lag": 0
+        }
+      },
+      "redis": {
+        "connected_clients": 4,
+        "used_memory": 1522912,
+        "instantaneous_ops_per_sec": 80,
+        "keyspace_hits": 3230,
+        "keyspace_misses": 712
+      },
+      "clickhouse": {
+        "active_part_rows": 3744
+      },
+      "clickhouse_queries": {
+        "recent_selects": 3663,
+        "recent_select_p95_ms": 22.0
+      },
+      "docker_stats": {
+        "relayforge-j3-09416ef3-controlled-1-analytics-api-1": {
+          "CPUPerc": "0.15%",
+          "MemPerc": "2.56%",
+          "MemUsage": "203.5MiB / 7.748GiB",
+          "PIDs": "63"
+        },
+        "relayforge-j3-09416ef3-controlled-1-analytics-consumer-1": {
+          "CPUPerc": "17.55%",
+          "MemPerc": "3.42%",
+          "MemUsage": "271.3MiB / 7.748GiB",
+          "PIDs": "69"
+        },
+        "relayforge-j3-09416ef3-controlled-1-clickhouse-1": {
+          "CPUPerc": "89.20%",
+          "MemPerc": "14.85%",
+          "MemUsage": "1.151GiB / 7.748GiB",
+          "PIDs": "215"
+        },
+        "relayforge-j3-09416ef3-controlled-1-control-plane-1": {
+          "CPUPerc": "7.87%",
+          "MemPerc": "4.69%",
+          "MemUsage": "372.1MiB / 7.748GiB",
+          "PIDs": "119"
+        },
+        "relayforge-j3-09416ef3-controlled-1-control-publisher-1": {
+          "CPUPerc": "0.60%",
+          "MemPerc": "2.54%",
+          "MemUsage": "201.5MiB / 7.748GiB",
+          "PIDs": "63"
+        },
+        "relayforge-j3-09416ef3-controlled-1-delivery-api-1": {
+          "CPUPerc": "0.21%",
+          "MemPerc": "3.07%",
+          "MemUsage": "243.2MiB / 7.748GiB",
+          "PIDs": "61"
+        },
+        "relayforge-j3-09416ef3-controlled-1-delivery-publisher-1": {
+          "CPUPerc": "17.11%",
+          "MemPerc": "3.79%",
+          "MemUsage": "300.9MiB / 7.748GiB",
+          "PIDs": "63"
+        },
+        "relayforge-j3-09416ef3-controlled-1-delivery-worker-1": {
+          "CPUPerc": "29.17%",
+          "MemPerc": "4.38%",
+          "MemUsage": "347.7MiB / 7.748GiB",
+          "PIDs": "104"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-1": {
+          "CPUPerc": "6.19%",
+          "MemPerc": "6.11%",
+          "MemUsage": "485.1MiB / 7.748GiB",
+          "PIDs": "142"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-primary-1": {
+          "CPUPerc": "2.19%",
+          "MemPerc": "0.53%",
+          "MemUsage": "41.74MiB / 7.748GiB",
+          "PIDs": "17"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-publisher-1": {
+          "CPUPerc": "0.88%",
+          "MemPerc": "3.15%",
+          "MemUsage": "249.9MiB / 7.748GiB",
+          "PIDs": "63"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-standby-1": {
+          "CPUPerc": "0.00%",
+          "MemPerc": "0.26%",
+          "MemUsage": "20.75MiB / 7.748GiB",
+          "PIDs": "5"
+        },
+        "relayforge-j3-09416ef3-controlled-1-kafka-1": {
+          "CPUPerc": "88.91%",
+          "MemPerc": "3.53%",
+          "MemUsage": "280.1MiB / 7.748GiB",
+          "PIDs": "141"
+        },
+        "relayforge-j3-09416ef3-controlled-1-load-receiver-1": {
+          "CPUPerc": "2.02%",
+          "MemPerc": "0.12%",
+          "MemUsage": "9.211MiB / 7.748GiB",
+          "PIDs": "11"
+        },
+        "relayforge-j3-09416ef3-controlled-1-postgres-1": {
+          "CPUPerc": "54.65%",
+          "MemPerc": "1.89%",
+          "MemUsage": "150.3MiB / 7.748GiB",
+          "PIDs": "32"
+        },
+        "relayforge-j3-09416ef3-controlled-1-redis-1": {
+          "CPUPerc": "2.32%",
+          "MemPerc": "0.13%",
+          "MemUsage": "10.17MiB / 7.748GiB",
+          "PIDs": "6"
+        },
+        "relayforge-j3-09416ef3-controlled-1-retry-scheduler-1": {
+          "CPUPerc": "0.66%",
+          "MemPerc": "3.14%",
+          "MemUsage": "249MiB / 7.748GiB",
+          "PIDs": "62"
+        },
+        "relayforge-j3-09416ef3-controlled-1-router-1": {
+          "CPUPerc": "0.81%",
+          "MemPerc": "3.54%",
+          "MemUsage": "281.2MiB / 7.748GiB",
+          "PIDs": "79"
+        },
+        "relayforge-j3-09416ef3-controlled-1-webhook-simulator-1": {
+          "CPUPerc": "0.08%",
+          "MemPerc": "1.52%",
+          "MemUsage": "120.9MiB / 7.748GiB",
+          "PIDs": "36"
+        }
+      },
+      "ingestion_pool": {
+        "hikaricp.connections.active": {
+          "VALUE": 0.0
+        }
+      },
+      "delivery_pool": {
+        "hikaricp.connections.active": {
+          "VALUE": 0.0
+        },
+        "hikaricp.connections.pending": {
+          "VALUE": 0.0
+        },
+        "hikaricp.connections.max": {
+          "VALUE": 8.0
+        },
+        "relayforge.delivery.handlers.active": {
+          "VALUE": 8.0
+        },
+        "relayforge.delivery.handler.duration": {
+          "COUNT": 2142.0,
+          "TOTAL_TIME": 723.910578663,
+          "MAX": 2.986955085
+        },
+        "relayforge.delivery.attempt.duration": {
+          "COUNT": 2142.0,
+          "TOTAL_TIME": 476.430251835,
+          "MAX": 0.773053417
+        },
+        "relayforge.delivery.outbound.duration": {
+          "COUNT": 2146.0,
+          "TOTAL_TIME": 447.751408378,
+          "MAX": 0.625368333
+        }
+      },
+      "delivery_publisher": {
+        "relayforge.outbox.pending?tag=owner:delivery": {
+          "VALUE": 5065.0
+        },
+        "relayforge.outbox.oldest.age.seconds?tag=owner:delivery": {
+          "VALUE": 61.0
+        },
+        "relayforge.outbox.publish?tag=owner:delivery&tag=result:published": {
+          "COUNT": 5400.0
+        }
+      },
+      "analytics_consumer": {
+        "relayforge.analytics.ingest.lag.seconds": {
+          "VALUE": 62.0
+        },
+        "relayforge.kafka.consumer.lag.max?tag=group:analytics-consumer": {
+          "VALUE": 662.0
+        },
+        "relayforge.clickhouse.insert.duration": {
+          "COUNT": 4301.0,
+          "TOTAL_TIME": 92.376729499,
+          "MAX": 0.498236959
+        },
+        "relayforge.clickhouse.insert?tag=result:success": {
+          "COUNT": 4304.0
+        },
+        "relayforge.clickhouse.insert?tag=result:error": {
+          "COUNT": 0.0
+        },
+        "relayforge.analytics.kafka.commits": {
+          "COUNT": 302.0
+        }
+      },
+      "receiver": {
+        "requests": 2261,
+        "successes": 2028,
+        "failures": 225,
+        "bytes": 2713188
+      }
+    },
+    {
+      "time_utc": "2026-11-18T16:07:34.013384+00:00",
+      "ingestion": {
+        "events": 990,
+        "registry": 990,
+        "outbox_pending": 0,
+        "database_bytes": 12916403,
+        "wal_bytes": 18217403,
+        "active_backends": 1,
+        "lock_waiters": 0,
+        "commits": 12865,
+        "deadlocks": 0
+      },
+      "delivery": {
+        "active_subscriptions": 45,
+        "routing_events": 990,
+        "routing_incomplete": 0,
+        "deliveries": 2970,
+        "attempts": 2521,
+        "backlog": 707,
+        "succeeded": 2263,
+        "dead_lettered": 0,
+        "outbox_pending": 4913,
+        "outbox_by_type": {
+          "delivery.ready.v1": {
+            "pending": 680,
+            "published": 2535,
+            "in_flight": 0,
+            "oldest_pending_age_s": 66.733543
+          },
+          "analytics.delivery-facts.v1": {
+            "pending": 4233,
+            "published": 3765,
+            "in_flight": 0,
+            "oldest_pending_age_s": 66.732692
+          }
+        },
+        "database_bytes": 26670771,
+        "wal_bytes": 59106395,
+        "active_backends": 1,
+        "lock_waiters": 0,
+        "commits": 32663,
+        "deadlocks": 0
+      },
+      "kafka_lag": {
+        "relayforge.analytics.delivery-facts.v1": 5,
+        "relayforge.delivery.ready.v1": 14,
+        "relayforge.config.changed.v1": 0,
+        "relayforge.event.accepted.v1": 0
+      },
+      "kafka_positions": {
+        "relayforge.analytics.delivery-facts.v1": {
+          "committed": 4705,
+          "end": 4710,
+          "lag": 5
+        },
+        "relayforge.delivery.ready.v1": {
+          "committed": 2488,
+          "end": 2502,
+          "lag": 14
+        },
+        "relayforge.config.changed.v1": {
+          "committed": 45,
+          "end": 45,
+          "lag": 0
+        },
+        "relayforge.event.accepted.v1": {
+          "committed": 990,
+          "end": 990,
+          "lag": 0
+        }
+      },
+      "redis": {
+        "connected_clients": 4,
+        "used_memory": 1494168,
+        "instantaneous_ops_per_sec": 242,
+        "keyspace_hits": 3613,
+        "keyspace_misses": 909
+      },
+      "clickhouse": {
+        "active_part_rows": 4764
+      },
+      "clickhouse_queries": {
+        "recent_selects": 4465,
+        "recent_select_p95_ms": 21.0
+      },
+      "docker_stats": {
+        "relayforge-j3-09416ef3-controlled-1-analytics-api-1": {
+          "CPUPerc": "0.12%",
+          "MemPerc": "2.58%",
+          "MemUsage": "204.5MiB / 7.748GiB",
+          "PIDs": "63"
+        },
+        "relayforge-j3-09416ef3-controlled-1-analytics-consumer-1": {
+          "CPUPerc": "61.43%",
+          "MemPerc": "4.51%",
+          "MemUsage": "357.7MiB / 7.748GiB",
+          "PIDs": "86"
+        },
+        "relayforge-j3-09416ef3-controlled-1-clickhouse-1": {
+          "CPUPerc": "85.41%",
+          "MemPerc": "12.36%",
+          "MemUsage": "980.7MiB / 7.748GiB",
+          "PIDs": "215"
+        },
+        "relayforge-j3-09416ef3-controlled-1-control-plane-1": {
+          "CPUPerc": "6.18%",
+          "MemPerc": "4.69%",
+          "MemUsage": "372.2MiB / 7.748GiB",
+          "PIDs": "119"
+        },
+        "relayforge-j3-09416ef3-controlled-1-control-publisher-1": {
+          "CPUPerc": "0.60%",
+          "MemPerc": "2.59%",
+          "MemUsage": "205.5MiB / 7.748GiB",
+          "PIDs": "63"
+        },
+        "relayforge-j3-09416ef3-controlled-1-delivery-api-1": {
+          "CPUPerc": "0.54%",
+          "MemPerc": "3.09%",
+          "MemUsage": "245.2MiB / 7.748GiB",
+          "PIDs": "61"
+        },
+        "relayforge-j3-09416ef3-controlled-1-delivery-publisher-1": {
+          "CPUPerc": "13.13%",
+          "MemPerc": "3.81%",
+          "MemUsage": "302.6MiB / 7.748GiB",
+          "PIDs": "63"
+        },
+        "relayforge-j3-09416ef3-controlled-1-delivery-worker-1": {
+          "CPUPerc": "24.42%",
+          "MemPerc": "4.41%",
+          "MemUsage": "349.8MiB / 7.748GiB",
+          "PIDs": "104"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-1": {
+          "CPUPerc": "6.82%",
+          "MemPerc": "6.11%",
+          "MemUsage": "484.7MiB / 7.748GiB",
+          "PIDs": "142"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-primary-1": {
+          "CPUPerc": "1.78%",
+          "MemPerc": "0.52%",
+          "MemUsage": "41.01MiB / 7.748GiB",
+          "PIDs": "17"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-publisher-1": {
+          "CPUPerc": "0.28%",
+          "MemPerc": "3.15%",
+          "MemUsage": "250MiB / 7.748GiB",
+          "PIDs": "63"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-standby-1": {
+          "CPUPerc": "0.00%",
+          "MemPerc": "0.27%",
+          "MemUsage": "21.28MiB / 7.748GiB",
+          "PIDs": "5"
+        },
+        "relayforge-j3-09416ef3-controlled-1-kafka-1": {
+          "CPUPerc": "8.39%",
+          "MemPerc": "3.40%",
+          "MemUsage": "270MiB / 7.748GiB",
+          "PIDs": "118"
+        },
+        "relayforge-j3-09416ef3-controlled-1-load-receiver-1": {
+          "CPUPerc": "9.93%",
+          "MemPerc": "0.12%",
+          "MemUsage": "9.301MiB / 7.748GiB",
+          "PIDs": "11"
+        },
+        "relayforge-j3-09416ef3-controlled-1-postgres-1": {
+          "CPUPerc": "59.26%",
+          "MemPerc": "1.94%",
+          "MemUsage": "153.9MiB / 7.748GiB",
+          "PIDs": "32"
+        },
+        "relayforge-j3-09416ef3-controlled-1-redis-1": {
+          "CPUPerc": "0.95%",
+          "MemPerc": "0.13%",
+          "MemUsage": "10.54MiB / 7.748GiB",
+          "PIDs": "6"
+        },
+        "relayforge-j3-09416ef3-controlled-1-retry-scheduler-1": {
+          "CPUPerc": "1.02%",
+          "MemPerc": "3.23%",
+          "MemUsage": "256MiB / 7.748GiB",
+          "PIDs": "62"
+        },
+        "relayforge-j3-09416ef3-controlled-1-router-1": {
+          "CPUPerc": "0.66%",
+          "MemPerc": "3.56%",
+          "MemUsage": "282.1MiB / 7.748GiB",
+          "PIDs": "74"
+        },
+        "relayforge-j3-09416ef3-controlled-1-webhook-simulator-1": {
+          "CPUPerc": "0.07%",
+          "MemPerc": "1.53%",
+          "MemUsage": "121.1MiB / 7.748GiB",
+          "PIDs": "36"
+        }
+      },
+      "ingestion_pool": {
+        "hikaricp.connections.active": {
+          "VALUE": 0.0
+        }
+      },
+      "delivery_pool": {
+        "hikaricp.connections.active": {
+          "VALUE": 1.0
+        },
+        "hikaricp.connections.pending": {
+          "VALUE": 0.0
+        },
+        "hikaricp.connections.max": {
+          "VALUE": 8.0
+        },
+        "relayforge.delivery.handlers.active": {
+          "VALUE": 8.0
+        },
+        "relayforge.delivery.handler.duration": {
+          "COUNT": 2694.0,
+          "TOTAL_TIME": 853.867230347,
+          "MAX": 2.986955085
+        },
+        "relayforge.delivery.attempt.duration": {
+          "COUNT": 2695.0,
+          "TOTAL_TIME": 591.699301523,
+          "MAX": 0.773053417
+        },
+        "relayforge.delivery.outbound.duration": {
+          "COUNT": 2695.0,
+          "TOTAL_TIME": 559.020364805,
+          "MAX": 0.625368333
+        }
+      },
+      "delivery_publisher": {
+        "relayforge.outbox.pending?tag=owner:delivery": {
+          "VALUE": 4943.0
+        },
+        "relayforge.outbox.oldest.age.seconds?tag=owner:delivery": {
+          "VALUE": 67.0
+        },
+        "relayforge.outbox.publish?tag=owner:delivery&tag=result:published": {
+          "COUNT": 6900.0
+        }
+      },
+      "analytics_consumer": {
+        "relayforge.analytics.ingest.lag.seconds": {
+          "VALUE": 71.0
+        },
+        "relayforge.kafka.consumer.lag.max?tag=group:analytics-consumer": {
+          "VALUE": 662.0
+        },
+        "relayforge.clickhouse.insert.duration": {
+          "COUNT": 5164.0,
+          "TOTAL_TIME": 103.224567149,
+          "MAX": 0.498236959
+        },
+        "relayforge.clickhouse.insert?tag=result:success": {
+          "COUNT": 5165.0
+        },
+        "relayforge.clickhouse.insert?tag=result:error": {
+          "COUNT": 0.0
+        },
+        "relayforge.analytics.kafka.commits": {
+          "COUNT": 611.0
+        }
+      },
+      "receiver": {
+        "requests": 2798,
+        "successes": 2514,
+        "failures": 279,
+        "bytes": 3357585
+      }
+    },
+    {
+      "time_utc": "2026-11-18T16:07:50.466383+00:00",
+      "ingestion": {
+        "events": 990,
+        "registry": 990,
+        "outbox_pending": 0,
+        "database_bytes": 12916403,
+        "wal_bytes": 18217453,
+        "active_backends": 1,
+        "lock_waiters": 0,
+        "commits": 14108,
+        "deadlocks": 0
+      },
+      "delivery": {
+        "active_subscriptions": 45,
+        "routing_events": 990,
+        "routing_incomplete": 0,
+        "deliveries": 2970,
+        "attempts": 3046,
+        "backlog": 228,
+        "succeeded": 2742,
+        "dead_lettered": 0,
+        "outbox_pending": 4719,
+        "outbox_by_type": {
+          "delivery.ready.v1": {
+            "pending": 228,
+            "published": 3046,
+            "in_flight": 0,
+            "oldest_pending_age_s": 77.432491
+          },
+          "analytics.delivery-facts.v1": {
+            "pending": 4491,
+            "published": 4571,
+            "in_flight": 0,
+            "oldest_pending_age_s": 78.037097
+          }
+        },
+        "database_bytes": 27924147,
+        "wal_bytes": 63951427,
+        "active_backends": 1,
+        "lock_waiters": 0,
+        "commits": 38790,
+        "deadlocks": 0
+      },
+      "kafka_lag": {
+        "relayforge.analytics.delivery-facts.v1": 19,
+        "relayforge.delivery.ready.v1": 2,
+        "relayforge.config.changed.v1": 0,
+        "relayforge.event.accepted.v1": 0
+      },
+      "kafka_positions": {
+        "relayforge.analytics.delivery-facts.v1": {
+          "committed": 5486,
+          "end": 5505,
+          "lag": 19
+        },
+        "relayforge.delivery.ready.v1": {
+          "committed": 3043,
+          "end": 3045,
+          "lag": 2
+        },
+        "relayforge.config.changed.v1": {
+          "committed": 45,
+          "end": 45,
+          "lag": 0
+        },
+        "relayforge.event.accepted.v1": {
+          "committed": 990,
+          "end": 990,
+          "lag": 0
+        }
+      },
+      "redis": {
+        "connected_clients": 4,
+        "used_memory": 1521328,
+        "instantaneous_ops_per_sec": 12,
+        "keyspace_hits": 3956,
+        "keyspace_misses": 1084
+      },
+      "clickhouse": {
+        "active_part_rows": 5574
+      },
+      "clickhouse_queries": {
+        "recent_selects": 5507,
+        "recent_select_p95_ms": 20.0
+      },
+      "docker_stats": {
+        "relayforge-j3-09416ef3-controlled-1-analytics-api-1": {
+          "CPUPerc": "20.37%",
+          "MemPerc": "3.14%",
+          "MemUsage": "248.8MiB / 7.748GiB",
+          "PIDs": "81"
+        },
+        "relayforge-j3-09416ef3-controlled-1-analytics-consumer-1": {
+          "CPUPerc": "16.21%",
+          "MemPerc": "3.49%",
+          "MemUsage": "276.5MiB / 7.748GiB",
+          "PIDs": "69"
+        },
+        "relayforge-j3-09416ef3-controlled-1-clickhouse-1": {
+          "CPUPerc": "121.95%",
+          "MemPerc": "13.75%",
+          "MemUsage": "1.066GiB / 7.748GiB",
+          "PIDs": "215"
+        },
+        "relayforge-j3-09416ef3-controlled-1-control-plane-1": {
+          "CPUPerc": "1.49%",
+          "MemPerc": "4.70%",
+          "MemUsage": "373.1MiB / 7.748GiB",
+          "PIDs": "119"
+        },
+        "relayforge-j3-09416ef3-controlled-1-control-publisher-1": {
+          "CPUPerc": "0.36%",
+          "MemPerc": "2.56%",
+          "MemUsage": "203MiB / 7.748GiB",
+          "PIDs": "63"
+        },
+        "relayforge-j3-09416ef3-controlled-1-delivery-api-1": {
+          "CPUPerc": "0.11%",
+          "MemPerc": "3.07%",
+          "MemUsage": "243.6MiB / 7.748GiB",
+          "PIDs": "61"
+        },
+        "relayforge-j3-09416ef3-controlled-1-delivery-publisher-1": {
+          "CPUPerc": "9.35%",
+          "MemPerc": "3.76%",
+          "MemUsage": "298.1MiB / 7.748GiB",
+          "PIDs": "63"
+        },
+        "relayforge-j3-09416ef3-controlled-1-delivery-worker-1": {
+          "CPUPerc": "7.00%",
+          "MemPerc": "4.44%",
+          "MemUsage": "352MiB / 7.748GiB",
+          "PIDs": "104"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-1": {
+          "CPUPerc": "1.09%",
+          "MemPerc": "6.09%",
+          "MemUsage": "483.5MiB / 7.748GiB",
+          "PIDs": "142"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-primary-1": {
+          "CPUPerc": "0.47%",
+          "MemPerc": "0.44%",
+          "MemUsage": "34.9MiB / 7.748GiB",
+          "PIDs": "17"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-publisher-1": {
+          "CPUPerc": "0.31%",
+          "MemPerc": "3.18%",
+          "MemUsage": "252.5MiB / 7.748GiB",
+          "PIDs": "63"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-standby-1": {
+          "CPUPerc": "0.00%",
+          "MemPerc": "0.26%",
+          "MemUsage": "20.84MiB / 7.748GiB",
+          "PIDs": "5"
+        },
+        "relayforge-j3-09416ef3-controlled-1-kafka-1": {
+          "CPUPerc": "98.25%",
+          "MemPerc": "4.33%",
+          "MemUsage": "343.5MiB / 7.748GiB",
+          "PIDs": "141"
+        },
+        "relayforge-j3-09416ef3-controlled-1-load-receiver-1": {
+          "CPUPerc": "0.36%",
+          "MemPerc": "0.98%",
+          "MemUsage": "77.54MiB / 7.748GiB",
+          "PIDs": "11"
+        },
+        "relayforge-j3-09416ef3-controlled-1-postgres-1": {
+          "CPUPerc": "55.87%",
+          "MemPerc": "2.00%",
+          "MemUsage": "158.6MiB / 7.748GiB",
+          "PIDs": "32"
+        },
+        "relayforge-j3-09416ef3-controlled-1-redis-1": {
+          "CPUPerc": "0.52%",
+          "MemPerc": "0.12%",
+          "MemUsage": "9.57MiB / 7.748GiB",
+          "PIDs": "6"
+        },
+        "relayforge-j3-09416ef3-controlled-1-retry-scheduler-1": {
+          "CPUPerc": "20.64%",
+          "MemPerc": "3.17%",
+          "MemUsage": "251.6MiB / 7.748GiB",
+          "PIDs": "62"
+        },
+        "relayforge-j3-09416ef3-controlled-1-router-1": {
+          "CPUPerc": "0.62%",
+          "MemPerc": "3.55%",
+          "MemUsage": "281.3MiB / 7.748GiB",
+          "PIDs": "74"
+        },
+        "relayforge-j3-09416ef3-controlled-1-webhook-simulator-1": {
+          "CPUPerc": "0.24%",
+          "MemPerc": "1.05%",
+          "MemUsage": "83.24MiB / 7.748GiB",
+          "PIDs": "37"
+        }
+      },
+      "ingestion_pool": {
+        "hikaricp.connections.active": {
+          "VALUE": 0.0
+        }
+      },
+      "delivery_pool": {
+        "hikaricp.connections.active": {
+          "VALUE": 0.0
+        },
+        "hikaricp.connections.pending": {
+          "VALUE": 0.0
+        },
+        "hikaricp.connections.max": {
+          "VALUE": 8.0
+        },
+        "relayforge.delivery.handlers.active": {
+          "VALUE": 0.0
+        },
+        "relayforge.delivery.handler.duration": {
+          "COUNT": 3070.0,
+          "TOTAL_TIME": 950.319353379,
+          "MAX": 2.986955085
+        },
+        "relayforge.delivery.attempt.duration": {
+          "COUNT": 3070.0,
+          "TOTAL_TIME": 671.733826775,
+          "MAX": 0.773053417
+        },
+        "relayforge.delivery.outbound.duration": {
+          "COUNT": 3070.0,
+          "TOTAL_TIME": 635.479999988,
+          "MAX": 0.625368333
+        }
+      },
+      "delivery_publisher": {
+        "relayforge.outbox.pending?tag=owner:delivery": {
+          "VALUE": 4734.0
+        },
+        "relayforge.outbox.oldest.age.seconds?tag=owner:delivery": {
+          "VALUE": 78.0
+        },
+        "relayforge.outbox.publish?tag=owner:delivery&tag=result:published": {
+          "COUNT": 8200.0
+        }
+      },
+      "analytics_consumer": {
+        "relayforge.analytics.ingest.lag.seconds": {
+          "VALUE": 75.0
+        },
+        "relayforge.kafka.consumer.lag.max?tag=group:analytics-consumer": {
+          "VALUE": 376.0
+        },
+        "relayforge.clickhouse.insert.duration": {
+          "COUNT": 6148.0,
+          "TOTAL_TIME": 120.579568069,
+          "MAX": 0.498236959
+        },
+        "relayforge.clickhouse.insert?tag=result:success": {
+          "COUNT": 6149.0
+        },
+        "relayforge.clickhouse.insert?tag=result:error": {
+          "COUNT": 0.0
+        },
+        "relayforge.analytics.kafka.commits": {
+          "COUNT": 828.0
+        }
+      },
+      "receiver": {
+        "requests": 3080,
+        "successes": 2772,
+        "failures": 308,
+        "bytes": 3695985
+      }
+    },
+    {
+      "time_utc": "2026-11-18T16:08:11.144198+00:00",
+      "ingestion": {
+        "events": 990,
+        "registry": 990,
+        "outbox_pending": 0,
+        "database_bytes": 12916403,
+        "wal_bytes": 18217453,
+        "active_backends": 1,
+        "lock_waiters": 0,
+        "commits": 14389,
+        "deadlocks": 0
+      },
+      "delivery": {
+        "active_subscriptions": 45,
+        "routing_events": 990,
+        "routing_incomplete": 0,
+        "deliveries": 2970,
+        "attempts": 3110,
+        "backlog": 171,
+        "succeeded": 2799,
+        "dead_lettered": 0,
+        "outbox_pending": 3470,
+        "outbox_by_type": {
+          "delivery.ready.v1": {
+            "pending": 170,
+            "published": 3110,
+            "in_flight": 0,
+            "oldest_pending_age_s": 74.92177
+          },
+          "analytics.delivery-facts.v1": {
+            "pending": 3300,
+            "published": 5890,
+            "in_flight": 0,
+            "oldest_pending_age_s": 74.930657
+          }
+        },
+        "database_bytes": 28284595,
+        "wal_bytes": 66060164,
+        "active_backends": 2,
+        "lock_waiters": 0,
+        "commits": 42149,
+        "deadlocks": 0
+      },
+      "kafka_lag": {
+        "relayforge.analytics.delivery-facts.v1": 199,
+        "relayforge.delivery.ready.v1": 0,
+        "relayforge.config.changed.v1": 0,
+        "relayforge.event.accepted.v1": 0
+      },
+      "kafka_positions": {
+        "relayforge.analytics.delivery-facts.v1": {
+          "committed": 6650,
+          "end": 6849,
+          "lag": 199
+        },
+        "relayforge.delivery.ready.v1": {
+          "committed": 3110,
+          "end": 3110,
+          "lag": 0
+        },
+        "relayforge.config.changed.v1": {
+          "committed": 45,
+          "end": 45,
+          "lag": 0
+        },
+        "relayforge.event.accepted.v1": {
+          "committed": 990,
+          "end": 990,
+          "lag": 0
+        }
+      },
+      "redis": {
+        "connected_clients": 4,
+        "used_memory": 1505240,
+        "instantaneous_ops_per_sec": 15,
+        "keyspace_hits": 3958,
+        "keyspace_misses": 1150
+      },
+      "clickhouse": {
+        "active_part_rows": 6748
+      },
+      "clickhouse_queries": {
+        "recent_selects": 6759,
+        "recent_select_p95_ms": 19.0
+      },
+      "docker_stats": {
+        "relayforge-j3-09416ef3-controlled-1-analytics-api-1": {
+          "CPUPerc": "0.43%",
+          "MemPerc": "2.51%",
+          "MemUsage": "199MiB / 7.748GiB",
+          "PIDs": "63"
+        },
+        "relayforge-j3-09416ef3-controlled-1-analytics-consumer-1": {
+          "CPUPerc": "15.38%",
+          "MemPerc": "3.56%",
+          "MemUsage": "282.1MiB / 7.748GiB",
+          "PIDs": "69"
+        },
+        "relayforge-j3-09416ef3-controlled-1-clickhouse-1": {
+          "CPUPerc": "168.19%",
+          "MemPerc": "12.72%",
+          "MemUsage": "1009MiB / 7.748GiB",
+          "PIDs": "215"
+        },
+        "relayforge-j3-09416ef3-controlled-1-control-plane-1": {
+          "CPUPerc": "2.58%",
+          "MemPerc": "4.69%",
+          "MemUsage": "372.1MiB / 7.748GiB",
+          "PIDs": "119"
+        },
+        "relayforge-j3-09416ef3-controlled-1-control-publisher-1": {
+          "CPUPerc": "0.76%",
+          "MemPerc": "2.61%",
+          "MemUsage": "207.5MiB / 7.748GiB",
+          "PIDs": "63"
+        },
+        "relayforge-j3-09416ef3-controlled-1-delivery-api-1": {
+          "CPUPerc": "0.16%",
+          "MemPerc": "3.10%",
+          "MemUsage": "246.1MiB / 7.748GiB",
+          "PIDs": "61"
+        },
+        "relayforge-j3-09416ef3-controlled-1-delivery-publisher-1": {
+          "CPUPerc": "10.25%",
+          "MemPerc": "3.76%",
+          "MemUsage": "298.6MiB / 7.748GiB",
+          "PIDs": "63"
+        },
+        "relayforge-j3-09416ef3-controlled-1-delivery-worker-1": {
+          "CPUPerc": "7.67%",
+          "MemPerc": "4.44%",
+          "MemUsage": "352.5MiB / 7.748GiB",
+          "PIDs": "103"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-1": {
+          "CPUPerc": "1.49%",
+          "MemPerc": "6.11%",
+          "MemUsage": "484.6MiB / 7.748GiB",
+          "PIDs": "142"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-primary-1": {
+          "CPUPerc": "0.75%",
+          "MemPerc": "0.44%",
+          "MemUsage": "34.71MiB / 7.748GiB",
+          "PIDs": "17"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-publisher-1": {
+          "CPUPerc": "0.47%",
+          "MemPerc": "3.19%",
+          "MemUsage": "253.2MiB / 7.748GiB",
+          "PIDs": "63"
+        },
+        "relayforge-j3-09416ef3-controlled-1-ingestion-standby-1": {
+          "CPUPerc": "0.00%",
+          "MemPerc": "0.26%",
+          "MemUsage": "20.74MiB / 7.748GiB",
+          "PIDs": "5"
+        },
+        "relayforge-j3-09416ef3-controlled-1-kafka-1": {
+          "CPUPerc": "10.14%",
+          "MemPerc": "4.48%",
+          "MemUsage": "355.5MiB / 7.748GiB",
+          "PIDs": "118"
+        },
+        "relayforge-j3-09416ef3-controlled-1-load-receiver-1": {
+          "CPUPerc": "0.49%",
+          "MemPerc": "0.15%",
+          "MemUsage": "12.07MiB / 7.748GiB",
+          "PIDs": "11"
+        },
+        "relayforge-j3-09416ef3-controlled-1-postgres-1": {
+          "CPUPerc": "55.86%",
+          "MemPerc": "2.01%",
+          "MemUsage": "159.3MiB / 7.748GiB",
+          "PIDs": "32"
+        },
+        "relayforge-j3-09416ef3-controlled-1-redis-1": {
+          "CPUPerc": "0.46%",
+          "MemPerc": "0.16%",
+          "MemUsage": "13.03MiB / 7.748GiB",
+          "PIDs": "6"
+        },
+        "relayforge-j3-09416ef3-controlled-1-retry-scheduler-1": {
+          "CPUPerc": "69.55%",
+          "MemPerc": "4.26%",
+          "MemUsage": "337.8MiB / 7.748GiB",
+          "PIDs": "79"
+        },
+        "relayforge-j3-09416ef3-controlled-1-router-1": {
+          "CPUPerc": "0.85%",
+          "MemPerc": "3.55%",
+          "MemUsage": "281.9MiB / 7.748GiB",
+          "PIDs": "74"
+        },
+        "relayforge-j3-09416ef3-controlled-1-webhook-simulator-1": {
+          "CPUPerc": "0.16%",
+          "MemPerc": "1.04%",
+          "MemUsage": "82.43MiB / 7.748GiB",
+          "PIDs": "37"
+        }
+      },
+      "ingestion_pool": {
+        "hikaricp.connections.active": {
+          "VALUE": 0.0
+        }
+      },
+      "delivery_pool": {
+        "hikaricp.connections.active": {
+          "VALUE": 0.0
+        },
+        "hikaricp.connections.pending": {
+          "VALUE": 0.0
+        },
+        "hikaricp.connections.max": {
+          "VALUE": 8.0
+        },
+        "relayforge.delivery.handlers.active": {
+          "VALUE": 0.0
+        },
+        "relayforge.delivery.handler.duration": {
+          "COUNT": 3137.0,
+          "TOTAL_TIME": 967.683040558,
+          "MAX": 1.677280126
+        },
+        "relayforge.delivery.attempt.duration": {
+          "COUNT": 3137.0,
+          "TOTAL_TIME": 686.244444528,
+          "MAX": 0.573782875
+        },
+        "relayforge.delivery.outbound.duration": {
+          "COUNT": 3137.0,
+          "TOTAL_TIME": 649.168553369,
+          "MAX": 0.37741325
+        }
+      },
+      "delivery_publisher": {
+        "relayforge.outbox.pending?tag=owner:delivery": {
+          "VALUE": 3470.0
+        },
+        "relayforge.outbox.oldest.age.seconds?tag=owner:delivery": {
+          "VALUE": 75.0
+        },
+        "relayforge.outbox.publish?tag=owner:delivery&tag=result:published": {
+          "COUNT": 9700.0
+        }
+      },
+      "analytics_consumer": {
+        "relayforge.analytics.ingest.lag.seconds": {
+          "VALUE": 79.0
+        },
+        "relayforge.kafka.consumer.lag.max?tag=group:analytics-consumer": {
+          "VALUE": 244.0
+        },
+        "relayforge.clickhouse.insert.duration": {
+          "COUNT": 7385.0,
+          "TOTAL_TIME": 144.731389228,
+          "MAX": 0.4603735
+        },
+        "relayforge.clickhouse.insert?tag=result:success": {
+          "COUNT": 7386.0
+        },
+        "relayforge.clickhouse.insert?tag=result:error": {
+          "COUNT": 0.0
+        },
+        "relayforge.analytics.kafka.commits": {
+          "COUNT": 872.0
+        }
+      },
+      "receiver": {
+        "requests": 3163,
+        "successes": 2844,
+        "failures": 316,
+        "bytes": 3795582
+      }
+    }
+  ],
+  "drain_seconds": null,
+  "delivery_lag": {
+    "completed": 2847,
+    "lag_p95_s": 105.81879679999999,
+    "lag_p99_s": 145.19956743999998
+  },
+  "evaluation": {
+    "status": "unmet",
+    "findings": [
+      "accepted_latency_p95",
+      "accepted_latency_p99",
+      "delivery_lag_p95",
+      "delivery_lag_p99",
+      "backlog_drain"
+    ]
+  },
+  "raw_results": "load-tests/results/j3-analytics-batch-32-20261118/controlled-7f45cea5f972.ndjson"
+}

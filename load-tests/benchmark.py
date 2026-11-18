@@ -324,7 +324,8 @@ def snapshot(compose, settings):
                 "relayforge.kafka.consumer.lag.max?tag=group:analytics-consumer",
                 "relayforge.clickhouse.insert.duration",
                 "relayforge.clickhouse.insert?tag=result:success",
-                "relayforge.clickhouse.insert?tag=result:error"])),
+                "relayforge.clickhouse.insert?tag=result:error",
+                "relayforge.analytics.kafka.commits"])),
             "receiver": safe_probe(receiver)}
 
 

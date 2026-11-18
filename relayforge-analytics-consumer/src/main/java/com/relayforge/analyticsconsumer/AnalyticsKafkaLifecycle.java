@@ -47,8 +47,8 @@ public final class AnalyticsKafkaLifecycle implements SmartLifecycle, ReadinessP
     private int consecutiveFailures;
 
     public AnalyticsKafkaLifecycle(String bootstrapServers, EnvelopeValidator validator,
-            ClickHouseFactStore store, MeterRegistry metrics) {
-        this(new KafkaConsumer<>(consumerSettings(bootstrapServers)),
+            ClickHouseFactStore store, MeterRegistry metrics, int maxPollRecords) {
+        this(new KafkaConsumer<>(consumerSettings(bootstrapServers, maxPollRecords)),
                 new KafkaProducer<>(producerSettings(bootstrapServers)), validator, store, metrics);
     }
 
@@ -68,12 +68,17 @@ public final class AnalyticsKafkaLifecycle implements SmartLifecycle, ReadinessP
         metrics.timer("relayforge.clickhouse.insert.duration");
         metrics.counter("relayforge.clickhouse.insert", "result", "success");
         metrics.counter("relayforge.clickhouse.insert", "result", "error");
+        metrics.counter("relayforge.analytics.kafka.commits");
         consumer.subscribe(List.of(TOPIC));
     }
 
-    private static Properties consumerSettings(String servers) {
+    private static Properties consumerSettings(String servers, int maxPollRecords) {
+        if (maxPollRecords < 1 || maxPollRecords > 32) {
+            throw new IllegalArgumentException("Invalid analytics poll size");
+        }
         Properties settings = KafkaConsumerSettings.properties(servers,
-                "relayforge-analytics-consumer", 1, 1, Duration.ofMinutes(5),
+                "relayforge-analytics-consumer", maxPollRecords, maxPollRecords,
+                Duration.ofMinutes(5),
                 Duration.ofMillis(100), Duration.ofSeconds(3));
         settings.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         return settings;
@@ -102,49 +107,69 @@ public final class AnalyticsKafkaLifecycle implements SmartLifecycle, ReadinessP
                 .mapToLong(entry -> Math.max(0, Math.round(
                         ((Number) entry.getValue().metricValue()).doubleValue())))
                 .max().orElse(0));
-        for (ConsumerRecord<String, String> record : records) {
-            TopicPartition partition = new TopicPartition(record.topic(), record.partition());
+        for (TopicPartition partition : records.partitions()) {
+            var partitionRecords = records.records(partition);
+            long firstOffset = partitionRecords.getFirst().offset();
+            long nextOffset = firstOffset;
+            Long failedOffset = null;
+            for (ConsumerRecord<String, String> record : partitionRecords) {
+                try {
+                    process(record);
+                    nextOffset = record.offset() + 1;
+                } catch (Exception unavailable) {
+                    if (unavailable instanceof InterruptedException) {
+                        Thread.currentThread().interrupt();
+                    }
+                    failedOffset = record.offset();
+                    break;
+                }
+            }
             try {
-                var envelope = validator.validate(record.topic(), record.key(), record.value());
-                AnalyticsFact fact = AnalyticsFact.parse(envelope);
-                long started = System.nanoTime();
-                boolean inserted;
-                try {
-                    inserted = store.insert(fact);
-                    metrics.counter("relayforge.clickhouse.insert", "result", "success").increment();
-                } catch (Exception unavailable) {
-                    metrics.counter("relayforge.clickhouse.insert", "result", "error").increment();
-                    throw unavailable;
-                } finally {
-                    metrics.timer("relayforge.clickhouse.insert.duration").record(
-                            Math.max(0, System.nanoTime() - started), TimeUnit.NANOSECONDS);
-                }
-                latestFactEpochSeconds.accumulateAndGet(fact.occurredAt().getEpochSecond(), Math::max);
-                consumer.commitSync(Map.of(partition, new OffsetAndMetadata(record.offset() + 1)),
-                        Duration.ofSeconds(3));
-                metrics.counter("relayforge.analytics.facts", "result",
-                        inserted ? "inserted" : "duplicate").increment();
-                LOG.info("Analytics fact stored organizationId={} eventId={} deliveryId={} factId={} "
-                                + "result={}", fact.organizationId(), fact.eventId(), fact.deliveryId(),
-                        fact.factId(), inserted ? "inserted" : "duplicate");
-                consecutiveFailures = 0;
-            } catch (InvalidEnvelopeException | IllegalArgumentException invalid) {
-                try {
-                    quarantine(record);
-                    consumer.commitSync(Map.of(partition, new OffsetAndMetadata(record.offset() + 1)),
+                if (nextOffset > firstOffset) {
+                    consumer.commitSync(Map.of(partition, new OffsetAndMetadata(nextOffset)),
                             Duration.ofSeconds(3));
-                    metrics.counter("relayforge.analytics.facts", "result", "invalid").increment();
-                    consecutiveFailures = 0;
-                } catch (Exception unavailable) {
-                    retry(partition, record.offset());
+                    metrics.counter("relayforge.analytics.kafka.commits").increment();
                 }
-            } catch (Exception unavailable) {
-                if (unavailable instanceof InterruptedException) {
-                    Thread.currentThread().interrupt();
-                }
-                retry(partition, record.offset());
+            } catch (RuntimeException unavailable) {
+                retry(partition, firstOffset);
+                continue;
+            }
+            if (failedOffset != null) {
+                retry(partition, failedOffset);
             }
         }
+    }
+
+    private void process(ConsumerRecord<String, String> record) throws Exception {
+        AnalyticsFact fact;
+        try {
+            var envelope = validator.validate(record.topic(), record.key(), record.value());
+            fact = AnalyticsFact.parse(envelope);
+        } catch (InvalidEnvelopeException | IllegalArgumentException invalid) {
+            quarantine(record);
+            metrics.counter("relayforge.analytics.facts", "result", "invalid").increment();
+            consecutiveFailures = 0;
+            return;
+        }
+        long started = System.nanoTime();
+        boolean inserted;
+        try {
+            inserted = store.insert(fact);
+            metrics.counter("relayforge.clickhouse.insert", "result", "success").increment();
+        } catch (Exception unavailable) {
+            metrics.counter("relayforge.clickhouse.insert", "result", "error").increment();
+            throw unavailable;
+        } finally {
+            metrics.timer("relayforge.clickhouse.insert.duration").record(
+                    Math.max(0, System.nanoTime() - started), TimeUnit.NANOSECONDS);
+        }
+        latestFactEpochSeconds.accumulateAndGet(fact.occurredAt().getEpochSecond(), Math::max);
+        metrics.counter("relayforge.analytics.facts", "result",
+                inserted ? "inserted" : "duplicate").increment();
+        LOG.info("Analytics fact stored organizationId={} eventId={} deliveryId={} factId={} "
+                        + "result={}", fact.organizationId(), fact.eventId(), fact.deliveryId(),
+                fact.factId(), inserted ? "inserted" : "duplicate");
+        consecutiveFailures = 0;
     }
 
     private void quarantine(ConsumerRecord<String, String> record)

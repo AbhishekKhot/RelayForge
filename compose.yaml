@@ -357,6 +357,7 @@ services:
       args: { MODULE: relayforge-analytics-consumer }
     environment:
       <<: [*clickhouse-env, *kafka-env, *observability-env]
+      RELAYFORGE_ANALYTICS_MAX_POLL_RECORDS: ${RELAYFORGE_ANALYTICS_MAX_POLL_RECORDS:-1}
     depends_on:
       clickhouse: { condition: service_healthy }
       kafka-init: { condition: service_completed_successfully }
