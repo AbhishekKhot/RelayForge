@@ -2,12 +2,22 @@
 
 import unittest
 
-from benchmark import (ensure_clean, evaluate, observe_drain, parse_kafka_lag,
+from benchmark import (ensure_clean, evaluate, observe_drain, parse_kafka_lag, parse_metrics,
                        pipeline_drained, summarize_records)
 from run_diagnostics import diagnostic_plan, diagnostics_failed
 
 
 class BenchmarkEvidenceTest(unittest.TestCase):
+    def test_metric_probe_keeps_named_gauges_and_timer_totals(self):
+        names = ["hikaricp.connections.active", "relayforge.delivery.handler.duration"]
+        output = ('{"measurements":[{"statistic":"VALUE","value":7}]}\n'
+                  '{"measurements":[{"statistic":"COUNT","value":30},'
+                  '{"statistic":"TOTAL_TIME","value":8.5}]}\n')
+        self.assertEqual(parse_metrics(names, output), {
+            names[0]: {"VALUE": 7},
+            names[1]: {"COUNT": 30, "TOTAL_TIME": 8.5},
+        })
+
     def test_kafka_lag_is_summed_by_topic_without_consumer_identity(self):
         output = """GROUP TOPIC PARTITION CURRENT-OFFSET LOG-END-OFFSET LAG CONSUMER-ID HOST CLIENT-ID
 router relayforge.event.accepted.v1 0 10 16 6 id host client

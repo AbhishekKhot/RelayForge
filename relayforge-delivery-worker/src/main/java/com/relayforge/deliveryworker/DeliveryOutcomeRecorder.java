@@ -6,4 +6,7 @@ import java.time.Duration;
 @FunctionalInterface
 public interface DeliveryOutcomeRecorder {
     void record(RetryPolicy.Outcome outcome, Duration elapsed);
+
+    default void recordOutbound(Duration elapsed) {
+    }
 }

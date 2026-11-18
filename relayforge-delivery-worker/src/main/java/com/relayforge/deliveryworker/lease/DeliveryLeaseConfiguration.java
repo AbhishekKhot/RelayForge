@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.relayforge.apisupport.ReadinessProbe;
 import com.relayforge.deliveryworker.DeliveryKafkaLifecycle;
 import com.relayforge.deliveryworker.DeliveryProcessor;
+import com.relayforge.deliveryworker.DeliveryWorkerCapacity;
 import com.relayforge.deliveryworker.DeliveryOutcomeRecorder;
 import com.relayforge.deliveryworker.MicrometerDeliveryOutcomeRecorder;
 import com.relayforge.deliveryworker.auth.AuthenticationStrategyResolver;
@@ -49,13 +50,18 @@ import org.springframework.transaction.support.TransactionTemplate;
 @ConditionalOnProperty(name = "relayforge.database.username")
 @EnableScheduling
 public class DeliveryLeaseConfiguration {
+    @Bean
+    DeliveryWorkerCapacity deliveryWorkerCapacity(Environment environment) {
+        return DeliveryWorkerCapacity.from(environment);
+    }
+
     @Bean(destroyMethod = "close")
-    HikariDataSource deliveryWorkerDataSource(Environment environment) {
+    HikariDataSource deliveryWorkerDataSource(Environment environment, DeliveryWorkerCapacity capacity) {
         HikariConfig config = new HikariConfig();
         config.setJdbcUrl(environment.getRequiredProperty("relayforge.database.url"));
         config.setUsername(environment.getRequiredProperty("relayforge.database.username"));
         config.setPassword(environment.getRequiredProperty("relayforge.database.password"));
-        config.setMaximumPoolSize(8);
+        config.setMaximumPoolSize(capacity.databaseConnections());
         config.setMinimumIdle(1);
         config.setConnectionTimeout(3000);
         config.setConnectionInitSql("SET TIME ZONE 'UTC'");
@@ -220,9 +226,9 @@ public class DeliveryLeaseConfiguration {
 
     @Bean
     DeliveryKafkaLifecycle deliveryKafkaLifecycle(Environment environment, ObjectMapper json,
-            DeliveryProcessor processor, MeterRegistry registry) {
+            DeliveryProcessor processor, MeterRegistry registry, DeliveryWorkerCapacity capacity) {
         return new DeliveryKafkaLifecycle(
                 environment.getRequiredProperty("relayforge.kafka.bootstrap-servers"), json,
-                processor, registry);
+                processor, registry, capacity);
     }
 }

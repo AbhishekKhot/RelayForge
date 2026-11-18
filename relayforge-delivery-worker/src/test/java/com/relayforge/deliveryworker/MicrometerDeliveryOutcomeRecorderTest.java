@@ -14,6 +14,7 @@ class MicrometerDeliveryOutcomeRecorderTest {
         var recorder = new MicrometerDeliveryOutcomeRecorder(registry);
         recorder.record(RetryPolicy.Outcome.RETRY_SCHEDULED, Duration.ofMillis(125));
         recorder.record(RetryPolicy.Outcome.SUCCEEDED, Duration.ofMillis(75));
+        recorder.recordOutbound(Duration.ofMillis(210));
 
         assertThat(registry.get("relayforge.delivery.attempts")
                 .tag("outcome", "retry_scheduled").counter().count()).isEqualTo(1);
@@ -21,5 +22,7 @@ class MicrometerDeliveryOutcomeRecorderTest {
                 .tag("outcome", "succeeded").counter().count()).isEqualTo(1);
         assertThat(registry.get("relayforge.delivery.attempt.duration").timer().count())
                 .isEqualTo(2);
+        assertThat(registry.get("relayforge.delivery.outbound.duration").timer().count())
+                .isEqualTo(1);
     }
 }
