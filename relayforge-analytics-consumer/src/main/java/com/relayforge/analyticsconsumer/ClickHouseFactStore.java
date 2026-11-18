@@ -2,6 +2,8 @@ package com.relayforge.analyticsconsumer;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -21,9 +23,10 @@ public final class ClickHouseFactStore {
     private final String password;
     private final ObjectMapper json;
     private final HttpClient client;
+    private final MeterRegistry metrics;
 
     public ClickHouseFactStore(URI base, String username, String password, ObjectMapper json,
-            HttpClient client) {
+            HttpClient client, MeterRegistry metrics) {
         if (base == null || !("http".equals(base.getScheme()) || "https".equals(base.getScheme()))
                 || base.getHost() == null || base.getPort() < 1 || base.getRawUserInfo() != null
                 || base.getRawQuery() != null || base.getRawFragment() != null
@@ -37,6 +40,9 @@ public final class ClickHouseFactStore {
         this.password = password;
         this.json = Objects.requireNonNull(json);
         this.client = Objects.requireNonNull(client);
+        this.metrics = Objects.requireNonNull(metrics);
+        metrics.timer("relayforge.clickhouse.fact.stage.duration", "stage", "lookup");
+        metrics.timer("relayforge.clickhouse.fact.stage.duration", "stage", "insert");
     }
 
     public boolean insert(AnalyticsFact fact) throws IOException, InterruptedException {
@@ -45,7 +51,7 @@ public final class ClickHouseFactStore {
                 + "WHERE organization_id = '" + fact.organizationId() + "' AND event_date = '"
                 + fact.eventDate() + "' AND fact_id = '" + fact.factId() + "' AND version = "
                 + fact.version() + " FORMAT JSONEachRow";
-        String rows = send(query, 65536);
+        String rows = sendTimed(query, 65536, "lookup");
         for (String line : rows.split("\\R")) {
             if (line.isBlank()) {
                 continue;
@@ -61,9 +67,19 @@ public final class ClickHouseFactStore {
             }
             return false;
         }
-        send("INSERT INTO relayforge_analytics.delivery_facts (" + COLUMNS
-                + ") FORMAT JSONEachRow\n" + expected + "\n", 4096);
+        sendTimed("INSERT INTO relayforge_analytics.delivery_facts (" + COLUMNS
+                + ") FORMAT JSONEachRow\n" + expected + "\n", 4096, "insert");
         return true;
+    }
+
+    private String sendTimed(String query, int maximumResponseBytes, String stage)
+            throws IOException, InterruptedException {
+        var sample = Timer.start(metrics);
+        try {
+            return send(query, maximumResponseBytes);
+        } finally {
+            sample.stop(metrics.timer("relayforge.clickhouse.fact.stage.duration", "stage", stage));
+        }
     }
 
     private String send(String query, int maximumResponseBytes) throws IOException, InterruptedException {

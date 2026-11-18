@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.relayforge.contracts.ValidatedEnvelope;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -46,8 +47,9 @@ class ClickHouseFactStoreIT {
                             "ORDER BY (organization_id, event_date, fact_id)");
             UUID organization = UUID.randomUUID();
             UUID factId = UUID.randomUUID();
+            var metrics = new SimpleMeterRegistry();
             ClickHouseFactStore store = new ClickHouseFactStore(base, "relayforge",
-                    "integration-secret", json, client);
+                    "integration-secret", json, client, metrics);
             AnalyticsFact first = fact(organization, factId, 1, "FAILED", 500);
             assertThat(store.insert(first)).isTrue();
             assertThat(store.insert(first)).isFalse();
@@ -63,6 +65,10 @@ class ClickHouseFactStoreIT {
             assertThat(row.path("http_status").isNull()).isTrue();
             assertThatThrownBy(() -> store.insert(fact(organization, factId, 2,
                     "SUCCEEDED", 204))).isInstanceOf(IllegalArgumentException.class);
+            assertThat(metrics.get("relayforge.clickhouse.fact.stage.duration")
+                    .tag("stage", "lookup").timer().count()).isEqualTo(4);
+            assertThat(metrics.get("relayforge.clickhouse.fact.stage.duration")
+                    .tag("stage", "insert").timer().count()).isEqualTo(2);
             query(client, base, "INSERT INTO relayforge_analytics.delivery_facts "
                     + "(organization_id, event_date, fact_id, version, fact_type, status, occurred_at) "
                     + "SELECT toUUID('" + organization + "'), toDate('2026-11-03'), "
