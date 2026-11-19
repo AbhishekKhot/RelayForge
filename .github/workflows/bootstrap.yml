@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   load-generators:
     runs-on: ubuntu-latest
@@ -20,33 +24,53 @@ jobs:
         run: node --test load-tests/load.test.mjs
       - name: Test J3 benchmark collector
         run: python3 -m unittest discover -s load-tests -p 'benchmark_test.py'
+      - name: Test PR acceptance scope
+        run: python3 -m unittest discover -s scripts -p 'ci_pr_scope_test.py'
 
   build-and-smoke:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Classify PR for full acceptance
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/ci_pr_scope.py "$BASE_SHA" "$HEAD_SHA"
       - uses: actions/setup-java@v6
+        if: steps.scope.outputs.full_acceptance == 'true'
         with:
           distribution: temurin
           java-version: '21'
           cache: maven
       - name: Test HA analytics recovery gate
+        if: steps.scope.outputs.full_acceptance == 'true'
         run: python3 -m unittest discover -s scripts -p 'verify_h3_test.py'
       - name: Test and package
+        if: steps.scope.outputs.full_acceptance == 'true'
         run: mvn -B verify
       - name: Create local Docker environment
+        if: steps.scope.outputs.full_acceptance == 'true'
         run: python3 scripts/create-env.py
       - name: Verify documented clean HA Compose setup
+        if: steps.scope.outputs.full_acceptance == 'true'
         run: python3 scripts/verify-local-setup.py
       - name: Verify isolated PostgreSQL point-in-time restore
+        if: steps.scope.outputs.full_acceptance == 'true'
         run: python3 scripts/verify-ha-pitr.py
       - name: Verify clean Compose boot and recovery
+        if: steps.scope.outputs.full_acceptance == 'true'
         run: |
           chmod +x scripts/verify-compose.sh
           scripts/verify-compose.sh
       - name: Verify synchronous ingestion and J1 happy path
+        if: steps.scope.outputs.full_acceptance == 'true'
         run: python3 deploy/ingestion-ha/verify.py
       - name: Verify fenced PostgreSQL promotion
+        if: steps.scope.outputs.full_acceptance == 'true'
         run: python3 scripts/verify-ha-promotion.py
       - name: Verify observability and dependency readiness
+        if: steps.scope.outputs.full_acceptance == 'true'
         run: python3 scripts/verify-i3.py
