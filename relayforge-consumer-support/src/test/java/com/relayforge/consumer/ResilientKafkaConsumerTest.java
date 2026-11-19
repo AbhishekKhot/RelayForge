@@ -97,6 +97,55 @@ class ResilientKafkaConsumerTest {
     }
 
     @Test
+    void oneWorkerProcessesBatchedRecordsInRevisionOrder() throws Exception {
+        Consumer<String, String> consumer = mockConsumer(records(
+                validRecord(0), validRecord(1), validRecord(2)));
+        CountDownLatch firstEntered = new CountDownLatch(1);
+        CountDownLatch releaseFirst = new CountDownLatch(1);
+        List<String> handled = new java.util.concurrent.CopyOnWriteArrayList<>();
+        MessageHandler handler = envelope -> {
+            if (envelope.aggregateId().equals("dlv_0")) {
+                firstEntered.countDown();
+                releaseFirst.await();
+            }
+            handled.add(envelope.aggregateId());
+        };
+        var loop = new ResilientKafkaConsumer(consumer, mockProducer(),
+                new EnvelopeValidator(new ObjectMapper()), handler,
+                new ConsumerOptions(1, 4, 2, Duration.ZERO,
+                        Duration.ofMillis(1), WAIT, WAIT), List.of(TOPIC));
+        try {
+            loop.runOnce();
+            assertThat(firstEntered.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(handled).isEmpty();
+            loop.runOnce();
+            verify(consumer, times(0)).commitSync(any(Map.class), any(Duration.class));
+            releaseFirst.countDown();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (handled.size() < 3 && System.nanoTime() < deadline) {
+                Thread.sleep(5);
+            }
+            assertThat(handled).containsExactly("dlv_0", "dlv_1", "dlv_2");
+            ArgumentCaptor<Map<TopicPartition, OffsetAndMetadata>> commits = ArgumentCaptor.forClass(Map.class);
+            long committedOffset = -1;
+            long commitDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (committedOffset < 3 && System.nanoTime() < commitDeadline) {
+                loop.runOnce();
+                try {
+                    verify(consumer, atLeast(1)).commitSync(commits.capture(), any(Duration.class));
+                    committedOffset = commits.getAllValues().getLast().get(PARTITION).offset();
+                } catch (AssertionError pending) {
+                    Thread.sleep(5);
+                }
+            }
+            assertThat(committedOffset).isEqualTo(3);
+        } finally {
+            releaseFirst.countDown();
+            loop.close();
+        }
+    }
+
+    @Test
     void continuesPollingWhileSlowHandlerKeepsPartitionPaused() throws Exception {
         Consumer<String, String> consumer = mockConsumer(records(validRecord(0)));
         AtomicBoolean paused = new AtomicBoolean();

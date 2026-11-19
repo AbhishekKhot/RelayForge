@@ -106,6 +106,7 @@ public class RouterDataConfiguration {
             io.micrometer.core.instrument.MeterRegistry registry) {
         return new RouterKafkaLifecycle(environment.getRequiredProperty("relayforge.kafka.bootstrap-servers"),
                 environment.getProperty("relayforge.router.delivery-shard-id", "dlv-a"), json,
-                projections::applyChange, events, registry);
+                projections::applyChange, events, registry,
+                environment.getProperty("relayforge.router.config-max-in-flight", Integer.class, 64));
     }
 }
