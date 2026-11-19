@@ -29,17 +29,18 @@ public final class RouterKafkaLifecycle implements SmartLifecycle, ReadinessProb
     private Thread eventThread;
 
     public RouterKafkaLifecycle(String bootstrapServers, String deliveryShardId, ObjectMapper json,
-            MessageHandler configurationChanges, MessageHandler events, MeterRegistry registry) {
+            MessageHandler configurationChanges, MessageHandler events, MeterRegistry registry,
+            int configMaxInFlight) {
         if (deliveryShardId == null || !deliveryShardId.matches("[A-Za-z0-9][A-Za-z0-9_-]{0,79}")) {
             throw new IllegalArgumentException("Invalid delivery shard");
         }
+        ConsumerOptions configOptions = configurationOptions(configMaxInFlight);
         EnvelopeValidator validator = new EnvelopeValidator(json);
         configConsumer = new ResilientKafkaConsumer(
                 new KafkaConsumer<>(consumerSettings(bootstrapServers,
-                        "relayforge-router-config-" + deliveryShardId, 1)),
+                        "relayforge-router-config-" + deliveryShardId, configMaxInFlight)),
                 new KafkaProducer<>(producerSettings(bootstrapServers)), validator,
-                configurationChanges, new ConsumerOptions(1, 1, 3, Duration.ofMillis(200),
-                Duration.ofMillis(100), Duration.ofSeconds(2), Duration.ofSeconds(5)),
+                configurationChanges, configOptions,
                 List.of(CONFIG_TOPIC), registry, "router-config");
         eventConsumer = new ResilientKafkaConsumer(
                 new KafkaConsumer<>(consumerSettings(bootstrapServers,
@@ -48,6 +49,14 @@ public final class RouterKafkaLifecycle implements SmartLifecycle, ReadinessProb
                 events, new ConsumerOptions(4, 32, 3, Duration.ofMillis(200),
                 Duration.ofMillis(100), Duration.ofSeconds(2), Duration.ofSeconds(5)),
                 List.of(EVENT_TOPIC), registry, "router-events");
+    }
+
+    static ConsumerOptions configurationOptions(int maxInFlight) {
+        if (maxInFlight < 1 || maxInFlight > 256) {
+            throw new IllegalArgumentException("Configuration max in flight must be between 1 and 256");
+        }
+        return new ConsumerOptions(1, maxInFlight, 3, Duration.ofMillis(200),
+                Duration.ofMillis(100), Duration.ofSeconds(2), Duration.ofSeconds(5));
     }
 
     private Properties consumerSettings(String servers, String group, int maximumRecords) {
