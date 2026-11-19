@@ -1,5 +1,7 @@
 # J3 benchmark plan and local diagnostic boundary
 
+The [distributed pre-prod deployment and measurement plan](j3-distributed-preprod-plan.md) lists the environment decisions, implementation gaps, provisioning gates, and evidence needed before these full profiles can run. No distributed environment exists yet.
+
 HLD §13 sets **planning goals**, not demonstrated capacity: 5,000 accepted events/s normal, 10,000 peak, and 15,000 headroom, with average fan-out 3 and 1.1 outbound attempts per delivery. The corresponding estimated attempt rates are 16,500, 33,000, and 49,500/s. Final capacity tests need distributed producers, application replicas, write shards with synchronous standbys, Kafka brokers, and ClickHouse on documented resources. A single-host Compose result cannot establish those production rates.
 
 ## Proposed full-profile acceptance contract
