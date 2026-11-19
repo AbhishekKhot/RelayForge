@@ -71,7 +71,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
             receiverUrl: settings.WEBHOOK_SIMULATOR_URL,
             provisioningCredential: settings.TRUSTED_PROVISIONING_CREDENTIAL,
             runId,
-            api: liveApi(`http://127.0.0.1:${settings.CONTROL_API_HOST_PORT}`),
+            api: liveApi(settings.CONTROL_API_URL
+                || `http://127.0.0.1:${settings.CONTROL_API_HOST_PORT}`),
         });
         await writeFile(output, JSON.stringify(manifest, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
         console.log(JSON.stringify({ run_id: runId, tenants: manifest.tenants.length,
