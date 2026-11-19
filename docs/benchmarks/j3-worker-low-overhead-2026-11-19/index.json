@@ -1,0 +1,36 @@
+{
+  "runs": [
+    {
+      "handlers": 8,
+      "pool": 8,
+      "repeat": 1,
+      "status": "unmet",
+      "report": "worker8-repeat-1.json",
+      "raw": "worker8-repeat-1.ndjson"
+    },
+    {
+      "handlers": 8,
+      "pool": 8,
+      "repeat": 2,
+      "status": "unmet",
+      "report": "worker8-repeat-2.json",
+      "raw": "worker8-repeat-2.ndjson"
+    },
+    {
+      "handlers": 16,
+      "pool": 8,
+      "repeat": 1,
+      "status": "unmet",
+      "report": "worker16-repeat-1.json",
+      "raw": "worker16-repeat-1.ndjson"
+    },
+    {
+      "handlers": 16,
+      "pool": 8,
+      "repeat": 2,
+      "status": "unmet",
+      "report": "worker16-repeat-2.json",
+      "raw": "worker16-repeat-2.ndjson"
+    }
+  ]
+}
