@@ -18,6 +18,8 @@ Create organizations and endpoint subscriptions. `--fanout` creates that many en
 RELAYFORGE_ENV_FILE=.env.loadtest node load-tests/setup.mjs --tenants 2 --fanout 3 --output load-tests/local.credentials.json
 ```
 
+`--endpoints-per-tenant` defaults to `--fanout`. Set it higher to populate active endpoints that subscribe to a separate, unused event type. This preserves the requested delivery fan-out while exercising a larger endpoint/configuration population. For the HLD planning population of 100 organizations, 10,000 active endpoints, and three matching subscriptions per event, use `--tenants 100 --fanout 3 --endpoints-per-tenant 100`. This creates 100 endpoints per organization, of which three match the producer's event type. Allow setup and configuration projection to finish before a measured profile; the command only provisions data and does not prove receiver or service capacity.
+
 Run one producer process with a requested open-loop arrival rate. Each process needs a distinct `--instance-id` if you provide the same `--run-id` to several processes. The producer reads the manifest and ingestion port from local files, sends exact-size JSON bodies with unique idempotency keys, and writes one result record per completed request. `--max-in-flight` caps its own concurrency; arrivals above the cap are counted as `skipped`, not queued. Only HTTP 202 counts as accepted. HTTP rejections, transport errors, skipped arrivals, and actual accepted events/s must be reported alongside the requested rate.
 
 ```sh

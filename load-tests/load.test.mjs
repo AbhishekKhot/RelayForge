@@ -161,3 +161,28 @@ test('setup creates requested fan-out for each tenant and keeps keys in the mani
     assert.equal(manifest.tenants[0].api_key, 'rotated-2');
     assert.equal(manifest.fanout, 3);
 });
+
+test('setup keeps endpoint population separate from matching fan-out', async () => {
+    const calls = [];
+    const api = async (path, body) => {
+        calls.push({ path, body });
+        if (path === '/v1/organizations') {
+            return { data: { organization_id: 'org-1', api_key: 'rf_key_1_secret' } };
+        }
+        if (path.includes('/rotate')) {
+            return { data: { api_key: 'rotated-key' } };
+        }
+        return { data: { endpoint_id: `endpoint-${calls.length}` } };
+    };
+    const manifest = await provision({ tenants: 1, fanout: 3, endpointsPerTenant: 26,
+        receiverUrl: 'http://load-receiver:8080', runId: 'run-b',
+        provisioningCredential: 'private', api });
+    const endpoints = calls.filter(call => call.path === '/v1/endpoints');
+    assert.equal(endpoints.length, 26);
+    assert.equal(endpoints.filter(call => call.body.event_types.includes(manifest.event_type)).length, 3);
+    assert.equal(calls[0].body.quota_overrides.max_active_endpoints, 26);
+    assert.equal(manifest.endpoints_per_tenant, 26);
+    await assert.rejects(provision({ tenants: 1, fanout: 4, endpointsPerTenant: 3,
+        receiverUrl: 'http://load-receiver:8080', runId: 'run-b',
+        provisioningCredential: 'private', api }), /endpointsPerTenant/);
+});
