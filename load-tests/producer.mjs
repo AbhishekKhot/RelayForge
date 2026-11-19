@@ -42,9 +42,26 @@ function percentile(sorted, fraction) {
     return Math.round(sorted[Math.ceil(sorted.length * fraction) - 1] * 1000) / 1000;
 }
 
+export function plannedStartDelay(startAtUtc, nowMs) {
+    if (startAtUtc == null) return 0;
+    if (typeof startAtUtc !== 'string'
+        || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(startAtUtc)
+        || !Number.isFinite(Date.parse(startAtUtc))) {
+        throw new Error('Invalid start-at-utc');
+    }
+    const delay = Date.parse(startAtUtc) - nowMs;
+    if (delay < -1000) throw new Error('start-at-utc is in the past');
+    if (delay > 300000) throw new Error('start-at-utc exceeds five minutes');
+    return Math.max(0, Math.ceil(delay));
+}
+
+export function producerBaseUrl(settings) {
+    return settings.INGESTION_API_URL || `http://127.0.0.1:${settings.INGESTION_API_HOST_PORT}`;
+}
+
 export async function runProducer(config) {
     const { baseUrl, tenants, rate, durationSeconds, payloadBytes, maxInFlight,
-        timeoutMs, runId, instanceId, record = () => {} } = config;
+        timeoutMs, runId, instanceId, startAtUtc = null, record = () => {} } = config;
     number(rate, 'rate', 0.001, 1000000);
     number(durationSeconds, 'durationSeconds', 0.001, 86400);
     integer(payloadBytes, 'payloadBytes', 1, 262144);
@@ -54,6 +71,7 @@ export async function runProducer(config) {
     identifier(instanceId, 'instanceId');
     if (!Array.isArray(tenants) || !tenants.length || tenants.some(tenant =>
         !tenant.api_key || !tenant.event_type)) throw new Error('Manifest needs tenant API keys and event types');
+    const startDelay = plannedStartDelay(startAtUtc, Date.now());
     const target = new URL('/v1/events', baseUrl);
     if (!['http:', 'https:'].includes(target.protocol)) throw new Error('baseUrl must use HTTP or HTTPS');
     const agent = target.protocol === 'https:'
@@ -62,12 +80,16 @@ export async function runProducer(config) {
     const total = Math.floor(rate * durationSeconds);
     const result = { run_id: runId, instance_id: instanceId,
         requested_rate: rate, requested_duration_seconds: durationSeconds, scheduled: total,
+        payload_bytes: payloadBytes, max_in_flight: maxInFlight, timeout_ms: timeoutMs,
+        planned_start_at_utc: startAtUtc,
         completed: 0, accepted: 0, rejected: 0, errors: 0, skipped: 0,
         max_in_flight_observed: 0 };
     const latencies = [];
     const pending = new Set();
     let recordError;
     let next = 0;
+    await sleep(startDelay);
+    result.started_at_utc = new Date().toISOString();
     const start = performance.now();
     try {
         while (performance.now() - start < durationSeconds * 1000) {
@@ -90,7 +112,8 @@ export async function runProducer(config) {
                         errorCode: error.message === 'timeout' ? 'TIMEOUT'
                             : /^[A-Z0-9_]{1,32}$/.test(error.code ?? '') ? error.code : 'OTHER' }))
                     .then(({ status, outcome, errorCode }) => {
-                        const latencyMs = performance.now() - sentAt;
+                        const completedAt = performance.now();
+                        const latencyMs = completedAt - sentAt;
                         result.completed += 1;
                         result[outcome === 'accepted' ? 'accepted'
                             : outcome === 'rejected' ? 'rejected' : 'errors'] += 1;
@@ -98,6 +121,8 @@ export async function runProducer(config) {
                         try {
                             record({ sequence, tenant_index: tenantIndex, status, outcome,
                                 ...(errorCode ? { error_code: errorCode } : {}),
+                                sent_offset_ms: Math.round((sentAt - start) * 1000) / 1000,
+                                completed_offset_ms: Math.round((completedAt - start) * 1000) / 1000,
                                 latency_ms: Math.round(latencyMs * 1000) / 1000 });
                         } catch (error) {
                             recordError ??= error;
@@ -117,6 +142,7 @@ export async function runProducer(config) {
     }
     latencies.sort((left, right) => left - right);
     result.elapsed_seconds = Math.round((performance.now() - start) / 1000 * 1000) / 1000;
+    result.finished_at_utc = new Date().toISOString();
     result.accepted_per_second = Math.round(result.accepted / result.elapsed_seconds * 1000) / 1000;
     result.latency_ms = { p50: percentile(latencies, 0.5),
         p95: percentile(latencies, 0.95), p99: percentile(latencies, 0.99) };
@@ -139,13 +165,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         stream.on('error', error => { streamError = error; });
         try {
             const summary = await runProducer({
-                baseUrl: `http://127.0.0.1:${settings.INGESTION_API_HOST_PORT}`,
+                baseUrl: producerBaseUrl(settings),
                 tenants: manifest.tenants, rate: number(flags.rate, 'rate', 0.001, 1000000),
                 durationSeconds: number(flags['duration-seconds'], 'duration-seconds', 0.001, 86400),
                 payloadBytes: integer(flags['payload-bytes'] ?? 1024, 'payload-bytes', 1, 262144),
                 maxInFlight: integer(flags['max-in-flight'] ?? 1000, 'max-in-flight', 1, 1000000),
                 timeoutMs: integer(flags['timeout-ms'] ?? 10000, 'timeout-ms', 1, 600000),
-                runId, instanceId,
+                runId, instanceId, startAtUtc: flags['start-at-utc'] ?? null,
                 record: line => {
                     if (streamError) throw streamError;
                     stream.write(JSON.stringify(line) + '\n');
