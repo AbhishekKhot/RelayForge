@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { once } from 'node:events';
+import { promisify } from 'node:util';
 import { buildEventBody, plannedStartDelay, producerBaseUrl, runProducer } from './producer.mjs';
 import { createReceiver } from './receiver.mjs';
 import { provision } from './setup.mjs';
 
 const servers = [];
+const execFileAsync = promisify(execFile);
 after(async () => Promise.all(servers.map(server => new Promise(resolve => server.close(resolve)))));
 
 async function listen(server) {
@@ -160,4 +166,60 @@ test('setup creates requested fan-out for each tenant and keeps keys in the mani
         .every(call => call.body.event_types[0] === manifest.event_type));
     assert.equal(manifest.tenants[0].api_key, 'rotated-2');
     assert.equal(manifest.fanout, 3);
+});
+
+test('setup keeps endpoint population separate from matching fan-out', async () => {
+    const calls = [];
+    const api = async (path, body) => {
+        calls.push({ path, body });
+        if (path === '/v1/organizations') {
+            return { data: { organization_id: 'org-1', api_key: 'rf_key_1_secret' } };
+        }
+        if (path.includes('/rotate')) {
+            return { data: { api_key: 'rotated-key' } };
+        }
+        return { data: { endpoint_id: `endpoint-${calls.length}` } };
+    };
+    const manifest = await provision({ tenants: 1, fanout: 3, endpointsPerTenant: 26,
+        receiverUrl: 'http://load-receiver:8080', runId: 'run-b',
+        provisioningCredential: 'private', api });
+    const endpoints = calls.filter(call => call.path === '/v1/endpoints');
+    assert.equal(endpoints.length, 26);
+    assert.equal(endpoints.filter(call => call.body.event_types.includes(manifest.event_type)).length, 3);
+    assert.equal(calls[0].body.quota_overrides.max_active_endpoints, 26);
+    assert.equal(manifest.endpoints_per_tenant, 26);
+    await assert.rejects(provision({ tenants: 1, fanout: 4, endpointsPerTenant: 3,
+        receiverUrl: 'http://load-receiver:8080', runId: 'run-b',
+        provisioningCredential: 'private', api }), /endpointsPerTenant/);
+});
+
+test('setup provisions through a configured remote control-plane URL', async () => {
+    const paths = [];
+    const server = createServer((request, response) => {
+        paths.push(request.url);
+        request.resume();
+        request.on('end', () => {
+            const data = request.url === '/v1/organizations'
+                ? { organization_id: 'org-1', api_key: 'rf_key_test_secret' }
+                : request.url.includes('/rotate')
+                    ? { api_key: 'rotated-key' } : { endpoint_id: 'endpoint-1' };
+            response.writeHead(200, { 'Content-Type': 'application/json' });
+            response.end(JSON.stringify({ data }));
+        });
+    });
+    const remoteUrl = await listen(server);
+    const directory = await mkdtemp(join(tmpdir(), 'relayforge-remote-control-'));
+    try {
+        const envFile = join(directory, '.env');
+        const output = join(directory, 'credentials.json');
+        await writeFile(envFile, `CONTROL_API_URL=${remoteUrl}\nCONTROL_API_HOST_PORT=1\n`
+            + 'WEBHOOK_SIMULATOR_URL=http://receiver.test\nTRUSTED_PROVISIONING_CREDENTIAL=test\n');
+        await execFileAsync(process.execPath, ['load-tests/setup.mjs', '--tenants', '1',
+            '--fanout', '1', '--run-id', 'remote-test', '--output', output],
+        { env: { ...process.env, RELAYFORGE_ENV_FILE: envFile }, timeout: 10000 });
+        assert.deepEqual(paths, ['/v1/organizations', '/v1/api-keys/test/rotate', '/v1/endpoints']);
+        assert.equal(JSON.parse(await readFile(output, 'utf8')).tenants[0].api_key, 'rotated-key');
+    } finally {
+        await rm(directory, { recursive: true, force: true });
+    }
 });
